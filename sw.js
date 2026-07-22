@@ -1,7 +1,7 @@
 // Service worker: caches the app shell so Tally launches offline and installs
 // as a PWA. TMDB API calls fall through to the network (and are cached
 // opportunistically so recently viewed shows keep working offline).
-const CACHE = 'tvtime2-v1';
+const CACHE = 'tvtime2-v2';
 const SHELL = [
   './',
   './index.html',
@@ -11,6 +11,8 @@ const SHELL = [
   './js/api.js',
   './js/db.js',
   './js/store.js',
+  './js/sync.js',
+  './js/config.js',
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];

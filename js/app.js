@@ -2,6 +2,7 @@ import { db } from './db.js';
 import * as api from './api.js';
 import { IMG } from './api.js';
 import * as store from './store.js';
+import * as sync from './sync.js';
 
 // ---------- helpers ----------
 const $ = (sel) => document.querySelector(sel);
@@ -545,6 +546,60 @@ document.addEventListener('click', async (ev) => {
   if (openEl) return openDetail(openEl.dataset.open);
 });
 
+// ---------- Google Drive box (inside Settings) ----------
+let activeSettings = null;
+
+async function renderGdriveBox(wrap) {
+  const box = wrap.querySelector('#gdriveBox');
+  if (!box) return;
+  const clientId = await sync.getClientId();
+  const st = sync.status();
+  const wasEnabled = await db.getSetting('gdriveEnabled', false);
+
+  if (!clientId) {
+    box.innerHTML = `
+      <p style="margin-top:0">Sync your data across devices using <b>your own Google Drive</b>.
+      Needs a one-time (free) Google setup — ask Claude for the walkthrough, then paste the Client ID here
+      (or commit it in <code>js/config.js</code> so every device gets it automatically):</p>
+      <input id="gcidInput" type="text" placeholder="xxxxx.apps.googleusercontent.com">
+      <div class="btn-row mt8"><button class="btn grow" id="saveGcid">Save Client ID</button></div>`;
+    box.querySelector('#saveGcid').onclick = async () => {
+      const v = box.querySelector('#gcidInput').value.trim();
+      if (!v) { toast('Paste a Client ID first'); return; }
+      await sync.setClientId(v); toast('Client ID saved'); renderGdriveBox(wrap);
+    };
+    return;
+  }
+
+  if (!st.connected) {
+    box.innerHTML = `
+      <p style="margin-top:0"><b>TV Time 2.0 will save your watch data to your own Google Drive</b>,
+      in a private app folder tied to the Google account you pick. Nothing else in your Drive is
+      visible to this app, and you stay signed in automatically on this device.</p>
+      <div class="btn-row"><button class="btn btn--accent grow" id="gConnect">${wasEnabled ? '↻ Reconnect Google Drive' : 'Connect Google Drive'}</button></div>`;
+    box.querySelector('#gConnect').onclick = async () => {
+      try { await sync.connect(true); toast('Connected — synced'); }
+      catch (e) { toast('Google sign-in was cancelled or failed'); }
+      renderGdriveBox(wrap);
+    };
+    return;
+  }
+
+  box.innerHTML = `
+    <p style="margin-top:0">✓ Syncing to Google Drive as <b>${esc(st.email || 'your account')}</b>${st.syncing ? ' · <i>syncing…</i>' : (st.lastSyncAt ? ` · last sync ${st.lastSyncAt.toLocaleTimeString()}` : '')}</p>
+    <div class="btn-row">
+      <button class="btn grow" id="gSyncNow">Sync now</button>
+      <button class="btn btn--ghost" id="gDisconnect" style="color:var(--danger)">Disconnect</button>
+    </div>`;
+  box.querySelector('#gSyncNow').onclick = async () => {
+    try { await sync.syncNow(); toast('Synced'); } catch (_) { toast('Sync failed — check connection'); }
+    renderGdriveBox(wrap);
+  };
+  box.querySelector('#gDisconnect').onclick = async () => {
+    await sync.disconnect(); toast('Google Drive disconnected'); renderGdriveBox(wrap);
+  };
+}
+
 // ---------- Settings modal ----------
 function openSettings() {
   const wrap = document.createElement('div');
@@ -557,6 +612,8 @@ function openSettings() {
       <input id="keyInput" type="text" placeholder="Paste your key…" value="${esc(api.hasKey() ? '••••••••••••' : '')}">
       <p>Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a> → Settings → API. Paste the <b>API Key (v3)</b> or the <b>Read Access Token (v4)</b>. Stored only on this device.</p>
       <div class="btn-row"><button class="btn btn--accent grow" id="saveKey">Save key</button></div>
+      <label>Google Drive sync</label>
+      <div id="gdriveBox"><div class="spinner" style="margin:10px auto"></div></div>
       <label>Backup</label>
       <div class="btn-row">
         <button class="btn grow" id="exportBtn">Export data</button>
@@ -569,7 +626,9 @@ function openSettings() {
       <p class="center muted" style="font-size:12px;margin-top:14px">TV Time 2.0 · a private, social-free TV & movie tracker</p>
     </div>`;
   document.body.appendChild(wrap);
-  const close = () => wrap.remove();
+  activeSettings = wrap;
+  renderGdriveBox(wrap);
+  const close = () => { activeSettings = null; wrap.remove(); };
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('#closeSettings').onclick = close;
   wrap.querySelector('#saveKey').onclick = async () => {
@@ -598,6 +657,16 @@ async function init() {
   await api.loadKey();
   await store.loadState();
   syncTabs(); render();
+
+  // Google Drive sync: silent reconnect + live status (never blocks startup).
+  sync.init({
+    onRemoteApplied: async () => {
+      await api.loadKey(); await store.loadState(); render();
+      toast('Updated from Google Drive');
+    },
+    onStatusChange: () => { if (activeSettings) renderGdriveBox(activeSettings); }
+  }).catch(() => {});
+
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }
 }
 init();
