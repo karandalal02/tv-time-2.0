@@ -180,6 +180,7 @@ export async function connect(interactive) {
   await acquireToken(interactive);
   await fetchEmail();
   await db.setSetting('gdriveEnabled', true);
+  await db.setSetting('welcomeDone', true); // Google sign-in completes onboarding
   await syncNow();
 }
 

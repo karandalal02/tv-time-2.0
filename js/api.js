@@ -2,6 +2,7 @@
 // The user supplies their own free key in Settings; it's stored on-device.
 // Supports both a v3 API key and a v4 Read Access Token (auto-detected).
 import { db } from './db.js';
+import { TMDB_KEY as DEFAULT_KEY } from './config.js';
 
 const BASE = 'https://api.themoviedb.org/3';
 export const IMG = {
@@ -9,10 +10,20 @@ export const IMG = {
   backdrop: (p, size = 'w780') => (p ? `https://image.tmdb.org/t/p/${size}${p}` : null)
 };
 
-let _key = null;
-export async function loadKey() { _key = await db.getSetting('tmdbKey', ''); return _key; }
-export async function setKey(k) { _key = (k || '').trim(); await db.setSetting('tmdbKey', _key); }
+let _key = null;       // key actually used for requests
+let _personal = null;  // key the user entered (overrides the built-in one)
+export async function loadKey() {
+  _personal = await db.getSetting('tmdbKey', '');
+  _key = _personal || DEFAULT_KEY;
+  return _key;
+}
+export async function setKey(k) {
+  _personal = (k || '').trim();
+  await db.setSetting('tmdbKey', _personal);
+  _key = _personal || DEFAULT_KEY;
+}
 export function hasKey() { return !!_key; }
+export function usingBuiltInKey() { return !_personal && !!DEFAULT_KEY; }
 
 // A v4 token is a long JWT with dots; a v3 key is a 32-char hex string.
 function isV4(k) { return k && k.split('.').length === 3; }

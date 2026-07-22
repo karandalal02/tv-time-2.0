@@ -80,7 +80,10 @@ function errorBox(err) {
 }
 
 // ---------- render dispatch ----------
+let welcomeNeeded = false; // computed at init; true until Google connect or skip
+
 async function render() {
+  if (welcomeNeeded) return renderWelcome();
   if (detailId != null) return isMovieId(detailId) ? renderMovieDetail(detailId) : renderTvDetail(detailId);
   if (!api.hasKey()) return renderNeedKey();
   switch (route.sec) {
@@ -92,6 +95,32 @@ async function render() {
       if (route.sub === 'all-movies') return renderFullList('movie');
       return renderYouHome();
   }
+}
+
+function renderWelcome() {
+  view.innerHTML = `<div class="empty" style="padding-top:56px">
+    <div class="empty__emoji">📺</div>
+    <p class="empty__title" style="font-size:22px">Welcome to TV Time 2.0</p>
+    <p>Your private TV &amp; movie tracker — no accounts, no social feed.</p>
+    <p style="max-width:320px;margin:12px auto 0">Sign in with Google and TV Time 2.0 will save your watch
+    data to <b>your own Google Drive</b>, so it follows you on every device.</p>
+    <button class="btn btn--accent btn--block mt16" id="welcomeConnect" style="max-width:320px;margin-left:auto;margin-right:auto">Continue with Google</button>
+    <button class="link" id="welcomeSkip" style="margin-top:16px;color:var(--muted2)">Use on this device only</button>
+  </div>`;
+  $('#welcomeConnect').onclick = async () => {
+    try {
+      await sync.connect(true);
+      welcomeNeeded = false;
+      await api.loadKey(); await store.loadState();
+      toast('Connected to Google Drive');
+    } catch (_) { toast('Google sign-in was cancelled'); }
+    render();
+  };
+  $('#welcomeSkip').onclick = async () => {
+    welcomeNeeded = false;
+    await db.setSetting('welcomeDone', true);
+    render();
+  };
 }
 
 function renderNeedKey() {
@@ -609,8 +638,10 @@ function openSettings() {
       <div class="modal__handle"></div>
       <h2>Settings</h2>
       <label for="keyInput">TMDB API Key or Read Access Token</label>
-      <input id="keyInput" type="text" placeholder="Paste your key…" value="${esc(api.hasKey() ? '••••••••••••' : '')}">
-      <p>Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a> → Settings → API. Paste the <b>API Key (v3)</b> or the <b>Read Access Token (v4)</b>. Stored only on this device.</p>
+      <input id="keyInput" type="text" placeholder="${api.usingBuiltInKey() ? 'Built-in key active — paste your own to override' : 'Paste your key…'}" value="${esc(api.hasKey() && !api.usingBuiltInKey() ? '••••••••••••' : '')}">
+      <p>${api.usingBuiltInKey()
+        ? 'Show &amp; movie data comes with a built-in key — you\'re all set. Optionally use your own from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a>.'
+        : 'Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a> → Settings → API. Paste the <b>API Key (v3)</b> or the <b>Read Access Token (v4)</b>. Stored only on this device.'}</p>
       <div class="btn-row"><button class="btn btn--accent grow" id="saveKey">Save key</button></div>
       <label>Google Drive sync</label>
       <div id="gdriveBox"><div class="spinner" style="margin:10px auto"></div></div>
@@ -656,6 +687,7 @@ async function init() {
   $('#brand').onclick = () => go('tv');
   await api.loadKey();
   await store.loadState();
+  welcomeNeeded = !(await db.getSetting('welcomeDone', false)) && !(await db.getSetting('gdriveEnabled', false));
   syncTabs(); render();
 
   // Google Drive sync: silent reconnect + live status (never blocks startup).
