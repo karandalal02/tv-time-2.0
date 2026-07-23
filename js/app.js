@@ -134,12 +134,12 @@ function renderNeedKey() {
 function renderTvUpNext() {
   const next = store.tvUpNext();
   const caught = store.tvCaughtUp();
-  let html = segmented([{ sub: 'upnext', label: 'Up Next' }, { sub: 'calendar', label: 'Calendar' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
   if (!next.length && !caught.length) {
     html += empty('🍿', 'No shows yet', 'Add a show from Search to start tracking.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a show</button>');
   } else {
-    if (next.length) html += `<div class="section-title">Up Next</div>` + next.map(tvUpNextCard).join('');
+    if (next.length) html += `<div class="section-title">Watch Next</div>` + next.map(tvUpNextCard).join('');
     if (caught.length) html += `<div class="section-title">All caught up</div>` + caught.map((s) => {
       const p = store.progress(s);
       const ended = store.isEnded(s);
@@ -171,7 +171,7 @@ function tvUpNextCard({ show, next }) {
 
 // ---------- TV: Calendar ----------
 function renderTvCalendar() {
-  let html = segmented([{ sub: 'upnext', label: 'Up Next' }, { sub: 'calendar', label: 'Calendar' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
   const items = store.tvCalendar();
   if (!items.length) { view.innerHTML = html + empty('📅', 'No upcoming episodes', 'New episodes for shows in your library will appear here.'); return; }
   const groups = {};
@@ -190,20 +190,18 @@ function renderTvCalendar() {
 
 // ---------- Movies: Up Next ----------
 function renderMovieUpNext() {
-  let html = segmented([{ sub: 'upnext', label: 'Up Next' }, { sub: 'calendar', label: 'Calendar' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
   const list = store.movieUpNext();
   if (!list.length) {
     html += empty('🎬', 'No movies queued', 'Add a movie from Search to build your watchlist.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a movie</button>');
   } else {
     html += `<div class="section-title">To Watch</div>` + list.map((m) => {
-      const upcoming = m.releaseDate && m.releaseDate > store.today();
       return `<div class="row" data-open="${m.id}">
         ${poster(m.poster, 'poster', '🎬')}
         <div class="row__body">
           <p class="row__title">${esc(m.name)}</p>
           <p class="row__sub">${(m.releaseDate || '').slice(0, 4) || '—'}${m.runtime ? ' · ' + m.runtime + 'm' : ''}</p>
-          ${upcoming ? `<p class="row__meta" style="color:var(--warn)">Coming ${fmtDate(m.releaseDate)}</p>` : ''}
         </div>
         <button class="ep__check" data-moviewatch="${m.id}" aria-label="Mark watched">✓</button>
       </div>`;
@@ -214,7 +212,7 @@ function renderMovieUpNext() {
 
 // ---------- Movies: Calendar ----------
 function renderMovieCalendar() {
-  let html = segmented([{ sub: 'upnext', label: 'Up Next' }, { sub: 'calendar', label: 'Calendar' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
   const items = store.movieCalendar();
   if (!items.length) { view.innerHTML = html + empty('📅', 'No upcoming releases', 'Add an unreleased movie to your watchlist and its release date shows here.'); return; }
   const groups = {};

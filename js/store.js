@@ -158,6 +158,9 @@ function lastActivity(id) {
 }
 
 // ---------- TV lists ----------
+// Shows to watch next: a show jumps to the top the moment you mark an episode
+// watched (most recent activity first); shows with no activity yet fall back to
+// newest-added first.
 export function tvUpNext() {
   return tvShows()
     .filter((s) => s.listType === 'watching')
@@ -201,16 +204,14 @@ export async function toggleMovieWatched(id, on) {
   return want;
 }
 
-// Movies you want to watch (not watched yet). Released first, then upcoming.
+// Movies to watch: unwatched AND already released. Most-recently-added first.
+// Unreleased movies are intentionally excluded — they live only in the
+// Future Releases (calendar) view.
 export function movieUpNext() {
   const t = today();
   return movies()
-    .filter((m) => !m.watchedAt)
-    .sort((a, b) => {
-      const au = (a.releaseDate || '') > t, bu = (b.releaseDate || '') > t; // upcoming?
-      if (au !== bu) return au ? 1 : -1;
-      return b.addedAt - a.addedAt;
-    });
+    .filter((m) => !m.watchedAt && !(m.releaseDate && m.releaseDate > t))
+    .sort((a, b) => b.addedAt - a.addedAt);
 }
 export function moviesWatched() {
   return movies().filter((m) => m.watchedAt).sort((a, b) => (b.watchedAt || '').localeCompare(a.watchedAt || ''));
