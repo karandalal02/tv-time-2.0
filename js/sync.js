@@ -205,11 +205,14 @@ function schedulePush() {
 
 // ---------- public actions ----------
 export async function connect(interactive) {
-  await acquireToken(interactive);
-  await fetchEmail();
+  await acquireToken(interactive); // throws only on a real auth failure
+  needsReconnect = false;          // authenticated → clear the reconnect state now
+  try { await fetchEmail(); } catch (_) {}
   await db.setSetting('gdriveEnabled', true);
   await db.setSetting('welcomeDone', true); // Google sign-in completes onboarding
-  await syncNow();
+  cbs.onStatusChange?.();          // hide the banner immediately, before syncing
+  syncNow().catch(() => {});       // pull/push in the background; a hiccup here must
+                                   // not undo the successful connection
 }
 
 export async function disconnect() {
