@@ -576,6 +576,11 @@ document.addEventListener('click', async (ev) => {
 // ---------- Google Drive box (inside Settings) ----------
 let activeSettings = null;
 
+function updateSyncBanner() {
+  const b = document.getElementById('syncBanner');
+  if (b) b.hidden = !sync.status().needsReconnect;
+}
+
 async function renderGdriveBox(wrap) {
   const box = wrap.querySelector('#gdriveBox');
   if (!box) return;
@@ -688,13 +693,26 @@ async function init() {
   welcomeNeeded = !(await db.getSetting('welcomeDone', false)) && !(await db.getSetting('gdriveEnabled', false));
   syncTabs(); render();
 
-  // Google Drive sync: silent reconnect + live status (never blocks startup).
+  // Persistent one-tap reconnect banner (shown only when Drive needs it).
+  const banner = document.createElement('div');
+  banner.id = 'syncBanner';
+  banner.className = 'sync-banner';
+  banner.hidden = true;
+  banner.innerHTML = `<span>☁️ Google Drive needs reconnect</span><button class="btn btn--sm btn--accent" id="bannerReconnect">Reconnect</button>`;
+  document.body.appendChild(banner);
+  banner.querySelector('#bannerReconnect').onclick = async () => {
+    try { await sync.connect(true); await api.loadKey(); await store.loadState(); toast('Reconnected'); render(); }
+    catch (_) { toast('Sign-in cancelled'); }
+    updateSyncBanner();
+  };
+
+  // Google Drive sync: reuse saved token, silent reconnect, live status.
   sync.init({
     onRemoteApplied: async () => {
       await api.loadKey(); await store.loadState(); render();
       toast('Updated from Google Drive');
     },
-    onStatusChange: () => { if (activeSettings) renderGdriveBox(activeSettings); }
+    onStatusChange: () => { updateSyncBanner(); if (activeSettings) renderGdriveBox(activeSettings); }
   }).catch(() => {});
 
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }

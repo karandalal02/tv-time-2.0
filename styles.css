@@ -238,6 +238,15 @@ img { display: block; }
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+.sync-banner {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(84px + var(--safe-bottom)); z-index: 45;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-elev2); border: 1px solid var(--warn); color: var(--text);
+  padding: 9px 10px 9px 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.45); max-width: 92%;
+}
+
 .link { color: var(--accent); background: none; border: 0; font-weight: 700; font-size: 14px; padding: 0; }
 .back-btn { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--muted); background: none; border: 0; font-size: 15px; font-weight: 600; }
 .center { text-align: center; }
