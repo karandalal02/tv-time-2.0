@@ -107,15 +107,7 @@ function renderWelcome() {
     <button class="btn btn--accent btn--block mt16" id="welcomeConnect" style="max-width:320px;margin-left:auto;margin-right:auto">Continue with Google</button>
     <button class="link" id="welcomeSkip" style="margin-top:16px;color:var(--muted2)">Use on this device only</button>
   </div>`;
-  $('#welcomeConnect').onclick = async () => {
-    try {
-      await sync.connect(true);
-      welcomeNeeded = false;
-      await api.loadKey(); await store.loadState();
-      toast('Connected to Google Drive');
-    } catch (_) { toast('Google sign-in was cancelled'); }
-    render();
-  };
+  $('#welcomeConnect').onclick = () => sync.startLogin(); // full-page redirect to Google
   $('#welcomeSkip').onclick = async () => {
     welcomeNeeded = false;
     await db.setSetting('welcomeDone', true);
@@ -584,41 +576,21 @@ function updateSyncBanner() {
 async function renderGdriveBox(wrap) {
   const box = wrap.querySelector('#gdriveBox');
   if (!box) return;
-  const clientId = await sync.getClientId();
   const st = sync.status();
   const wasEnabled = await db.getSetting('gdriveEnabled', false);
 
-  if (!clientId) {
-    box.innerHTML = `
-      <p style="margin-top:0">Sync your data across devices using <b>your own Google Drive</b>.
-      Needs a one-time (free) Google setup — ask Claude for the walkthrough, then paste the Client ID here
-      (or commit it in <code>js/config.js</code> so every device gets it automatically):</p>
-      <input id="gcidInput" type="text" placeholder="xxxxx.apps.googleusercontent.com">
-      <div class="btn-row mt8"><button class="btn grow" id="saveGcid">Save Client ID</button></div>`;
-    box.querySelector('#saveGcid').onclick = async () => {
-      const v = box.querySelector('#gcidInput').value.trim();
-      if (!v) { toast('Paste a Client ID first'); return; }
-      await sync.setClientId(v); toast('Client ID saved'); renderGdriveBox(wrap);
-    };
-    return;
-  }
-
   if (!st.connected) {
     box.innerHTML = `
-      <p style="margin-top:0"><b>TV Time 2.0 will save your watch data to your own Google Drive</b>,
-      in a private app folder tied to the Google account you pick. Nothing else in your Drive is
-      visible to this app, and you stay signed in automatically on this device.</p>
-      <div class="btn-row"><button class="btn btn--accent grow" id="gConnect">${wasEnabled ? '↻ Reconnect Google Drive' : 'Connect Google Drive'}</button></div>`;
-    box.querySelector('#gConnect').onclick = async () => {
-      try { await sync.connect(true); toast('Connected — synced'); }
-      catch (e) { toast('Google sign-in was cancelled or failed'); }
-      renderGdriveBox(wrap);
-    };
+      <p style="margin-top:0"><b>Sign in with Google to sync across devices.</b> Your watch data is
+      saved to a private app folder in <b>your own Google Drive</b> — nothing else in your Drive is
+      visible to this app. Sign in once and you stay connected.</p>
+      <div class="btn-row"><button class="btn btn--accent grow" id="gConnect">${wasEnabled ? '↻ Reconnect Google Drive' : 'Sign in with Google'}</button></div>`;
+    box.querySelector('#gConnect').onclick = () => sync.startLogin();
     return;
   }
 
   box.innerHTML = `
-    <p style="margin-top:0">✓ Syncing to Google Drive as <b>${esc(st.email || 'your account')}</b>${st.syncing ? ' · <i>syncing…</i>' : (st.lastSyncAt ? ` · last sync ${st.lastSyncAt.toLocaleTimeString()}` : '')}</p>
+    <p style="margin-top:0">✓ Signed in as <b>${esc(st.email || 'your account')}</b>${st.syncing ? ' · <i>syncing…</i>' : (st.lastSyncAt ? ` · last sync ${st.lastSyncAt.toLocaleTimeString()}` : '')}</p>
     <div class="btn-row">
       <button class="btn grow" id="gSyncNow">Sync now</button>
       <button class="btn btn--ghost" id="gDisconnect" style="color:var(--danger)">Disconnect</button>
@@ -700,19 +672,26 @@ async function init() {
   banner.hidden = true;
   banner.innerHTML = `<span>☁️ Google Drive needs reconnect</span><button class="btn btn--sm btn--accent" id="bannerReconnect">Reconnect</button>`;
   document.body.appendChild(banner);
-  banner.querySelector('#bannerReconnect').onclick = async () => {
-    try { await sync.connect(true); await api.loadKey(); await store.loadState(); toast('Reconnected'); render(); }
-    catch (_) { toast('Sign-in cancelled'); }
-    updateSyncBanner();
-  };
+  banner.querySelector('#bannerReconnect').onclick = () => sync.startLogin();
 
-  // Google Drive sync: reuse saved token, silent reconnect, live status.
+  // If we just came back from Google, tidy the URL (?auth=ok / denied / fail).
+  const authParam = new URLSearchParams(location.search).get('auth');
+  if (authParam) {
+    history.replaceState(null, '', location.pathname);
+    if (authParam === 'denied' || authParam === 'fail') toast('Google sign-in didn’t complete');
+  }
+
+  // Google Drive sync (via backend): fetch a fresh token, live status.
   sync.init({
     onRemoteApplied: async () => {
       await api.loadKey(); await store.loadState(); render();
       toast('Updated from Google Drive');
     },
-    onStatusChange: () => { updateSyncBanner(); if (activeSettings) renderGdriveBox(activeSettings); }
+    onStatusChange: () => {
+      updateSyncBanner();
+      if (sync.status().connected && welcomeNeeded) { welcomeNeeded = false; render(); }
+      if (activeSettings) renderGdriveBox(activeSettings);
+    }
   }).catch(() => {});
 
   if ('serviceWorker' in navigator) { try { await navigator.serviceWorker.register('./sw.js'); } catch (_) {} }

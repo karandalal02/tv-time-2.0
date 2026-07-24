@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "type": "module",
+  "name": "tv-time-2",
+  "description": "TV Time 2.0 — private TV & movie tracker (static app + serverless Google auth backend)"
+}

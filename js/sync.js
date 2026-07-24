@@ -1,117 +1,65 @@
-// Google Drive sync. Design:
-//  - Explicit consent: user taps "Connect Google Drive" and approves via
-//    Google's own screen; we display exactly which email is connected.
-//  - Data lives in a single JSON file in the Drive *app-data folder* — a
-//    hidden, app-private area of the user's own Drive (no clutter, and this
-//    app can't see any other Drive files: scope is drive.appdata only).
-//  - Silent reconnect: while the user stays signed in to Google in this
-//    browser, we refresh access in the background — no repeated logins.
-//  - Conflict rule: newest change wins. A local change clock ('lastChangeAt')
-//    is compared with the one stored in the Drive file.
+// Google Drive sync via our own backend (see /api/auth/*).
+//
+//  - Sign in ONCE: a full-page redirect to /api/auth/login → Google → back.
+//    The backend keeps the refresh token in a first-party cookie.
+//  - Every open, we ask /api/auth/token for a fresh access token. Because it's
+//    same-origin, this works silently on mobile Firefox/Safari — the whole
+//    reason we moved to a backend. No popups, no third-party cookies.
+//  - Drive files are still read/written directly from the browser with that
+//    access token (Google allows CORS for the Drive API).
+//  - Conflict rule: newest change wins (a local 'lastChangeAt' vs the Drive file).
 import { db } from './db.js';
-import { GOOGLE_CLIENT_ID } from './config.js';
 
-const SCOPES = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
 const FILE_NAME = 'tvtime2-data.json';
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 
-let tokenClient = null;
 let accessToken = null;
 let tokenExpiresAt = 0;
 let fileId = null;
 let email = null;
 let lastSyncAt = null;
 let syncing = false;
-let needsReconnect = false; // token expired & silent refresh unavailable (common on iOS)
+let needsReconnect = false;
 let pushTimer = null;
 let cbs = {}; // { onRemoteApplied, onStatusChange }
 
-// ---------- public status ----------
-export async function getClientId() {
-  return GOOGLE_CLIENT_ID || await db.getSetting('gClientId', '');
-}
-export async function setClientId(v) { await db.setSetting('gClientId', (v || '').trim()); }
 export function status() {
-  const tokenValid = !!accessToken && Date.now() < tokenExpiresAt;
-  return { connected: tokenValid, needsReconnect, email, lastSyncAt, syncing };
+  return { connected: !!accessToken && Date.now() < tokenExpiresAt, needsReconnect, email, lastSyncAt, syncing };
 }
 
-// Reuse the access token across app opens so reopening within its lifetime
-// (~1h) needs no Google round-trip — important on iOS, where the silent
-// refresh iframe is blocked once the app is installed to the Home Screen.
-async function persistToken() {
-  await db.setSetting('gToken', accessToken ? { accessToken, tokenExpiresAt } : null);
-}
-async function loadPersistedToken() {
-  const t = await db.getSetting('gToken', null);
-  if (t && t.accessToken && Date.now() < t.tokenExpiresAt) {
-    accessToken = t.accessToken;
-    tokenExpiresAt = t.tokenExpiresAt;
-    return true;
-  }
-  return false;
+// ---------- token (from our backend) ----------
+async function fetchBackendToken() {
+  let res;
+  try { res = await fetch('/api/auth/token', { credentials: 'include', cache: 'no-store' }); }
+  catch (_) { return null; }              // offline / backend unavailable (e.g. local preview)
+  if (res.status === 401) return 'UNAUTH'; // signed out — needs reconnect
+  if (!res.ok) return null;
+  return res.json();                       // { access_token, expires_in, email }
 }
 
-// ---------- Google Identity Services ----------
-function loadGis() {
-  if (window.google?.accounts?.oauth2) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.async = true;
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('Could not load Google sign-in (offline?)'));
-    document.head.appendChild(s);
-  });
-}
-
-async function ensureTokenClient() {
-  const clientId = await getClientId();
-  if (!clientId) throw new Error('NO_CLIENT_ID');
-  await loadGis();
-  if (!tokenClient) {
-    tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: SCOPES,
-      callback: () => {} // replaced per-request
-    });
-  }
-  return tokenClient;
-}
-
-// prompt '' → Google shows UI only if needed; 'none' → silent or fail.
-function requestToken(prompt) {
-  return new Promise((resolve, reject) => {
-    tokenClient.callback = (resp) => resp.error ? reject(new Error(resp.error)) : resolve(resp);
-    tokenClient.error_callback = (err) => reject(new Error(err?.type || 'auth_failed'));
-    tokenClient.requestAccessToken({ prompt });
-  });
-}
-
-async function acquireToken(interactive) {
-  await ensureTokenClient();
-  const resp = await requestToken(interactive ? '' : 'none');
-  accessToken = resp.access_token;
-  tokenExpiresAt = Date.now() + Math.max(0, (resp.expires_in - 120)) * 1000;
-  needsReconnect = false;
-  await persistToken();
+// Ensure we hold a valid access token. Returns true/false, or 'UNAUTH' when the
+// backend says the user must reconnect.
+async function ensureToken() {
+  if (accessToken && Date.now() < tokenExpiresAt) return true;
+  const t = await fetchBackendToken();
+  if (t === 'UNAUTH') { accessToken = null; return 'UNAUTH'; }
+  if (!t || !t.access_token) { accessToken = null; return false; }
+  accessToken = t.access_token;
+  tokenExpiresAt = Date.now() + Math.max(0, (t.expires_in || 3600) - 120) * 1000;
+  if (t.email) { email = t.email; await db.setSetting('gdriveEmail', email); }
+  return true;
 }
 
 async function authedFetch(url, opts = {}) {
-  if (!accessToken || Date.now() > tokenExpiresAt) {
-    // Try a silent refresh; if it fails (typical on installed iOS PWAs), flag
-    // for a one-tap reconnect instead of throwing an opaque error.
-    try { await acquireToken(false); }
-    catch (_) { needsReconnect = true; cbs.onStatusChange?.(); throw new Error('NEEDS_RECONNECT'); }
-  }
-  const doFetch = () => fetch(url, {
-    ...opts,
-    headers: { ...(opts.headers || {}), Authorization: `Bearer ${accessToken}` }
-  });
+  const ok = await ensureToken();
+  if (ok !== true) { needsReconnect = (ok === 'UNAUTH'); cbs.onStatusChange?.(); throw new Error('NEEDS_RECONNECT'); }
+  const doFetch = () => fetch(url, { ...opts, headers: { ...(opts.headers || {}), Authorization: `Bearer ${accessToken}` } });
   let res = await doFetch();
   if (res.status === 401) {
-    try { await acquireToken(false); } catch (_) { needsReconnect = true; cbs.onStatusChange?.(); throw new Error('NEEDS_RECONNECT'); }
+    accessToken = null; tokenExpiresAt = 0;
+    const again = await ensureToken();
+    if (again !== true) { needsReconnect = (again === 'UNAUTH'); cbs.onStatusChange?.(); throw new Error('NEEDS_RECONNECT'); }
     res = await doFetch();
   }
   if (!res.ok) throw new Error('DRIVE_HTTP_' + res.status);
@@ -121,14 +69,10 @@ async function authedFetch(url, opts = {}) {
 // ---------- Drive file ops (app-data folder) ----------
 async function findFile() {
   const q = encodeURIComponent(`name='${FILE_NAME}'`);
-  const res = await authedFetch(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id,modifiedTime)`);
-  const data = await res.json();
-  return data.files?.[0]?.id || null;
+  const res = await authedFetch(`${API}/files?spaces=appDataFolder&q=${q}&fields=files(id)`);
+  return (await res.json()).files?.[0]?.id || null;
 }
-async function downloadFile(id) {
-  const res = await authedFetch(`${API}/files/${id}?alt=media`);
-  return res.json();
-}
+async function downloadFile(id) { return (await authedFetch(`${API}/files/${id}?alt=media`)).json(); }
 async function uploadFile(payload) {
   const body = JSON.stringify(payload);
   if (fileId) {
@@ -142,33 +86,22 @@ async function uploadFile(payload) {
       `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n` +
       `--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
     const res = await authedFetch(`${UPLOAD}/files?uploadType=multipart`, {
-      method: 'POST',
-      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-      body: multipart
+      method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${boundary}` }, body: multipart
     });
     fileId = (await res.json()).id;
   }
 }
 
 // ---------- core sync ----------
-async function fetchEmail() {
-  const res = await authedFetch('https://www.googleapis.com/oauth2/v3/userinfo');
-  const info = await res.json();
-  email = info.email || null;
-  if (email) await db.setSetting('gdriveEmail', email);
-}
-
 async function push() {
-  const payload = {
+  await uploadFile({
     app: 'tvtime2', version: 2,
     savedAt: new Date().toISOString(),
     lastChangeAt: await db.getSetting('lastChangeAt', 0),
     data: await db.exportAll()
-  };
-  await uploadFile(payload);
+  });
   lastSyncAt = new Date();
 }
-
 async function applyRemote(remote) {
   db.setSuppressChanges(true);
   try {
@@ -180,10 +113,10 @@ async function applyRemote(remote) {
 }
 
 export async function syncNow() {
-  if (!accessToken || syncing) return;
+  if (syncing) return;
   syncing = true; cbs.onStatusChange?.();
   try {
-    if (!fileId) fileId = await findFile();
+    if (fileId == null) fileId = await findFile();
     const localLC = await db.getSetting('lastChangeAt', 0);
     if (!fileId) { await push(); return; }
     const remote = await downloadFile(fileId);
@@ -196,52 +129,39 @@ export async function syncNow() {
 
 function schedulePush() {
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(async () => {
-    if (!accessToken) return;
-    try { if (!fileId) fileId = await findFile(); await push(); cbs.onStatusChange?.(); }
-    catch (_) { /* offline / needs-reconnect; retried on next change or reconnect */ }
+  pushTimer = setTimeout(() => {
+    syncNow().catch(() => {}); // offline / needs-reconnect; retried on next change
   }, 2500);
 }
 
 // ---------- public actions ----------
-export async function connect(interactive) {
-  await acquireToken(interactive); // throws only on a real auth failure
-  needsReconnect = false;          // authenticated → clear the reconnect state now
-  try { await fetchEmail(); } catch (_) {}
-  await db.setSetting('gdriveEnabled', true);
-  await db.setSetting('welcomeDone', true); // Google sign-in completes onboarding
-  cbs.onStatusChange?.();          // hide the banner immediately, before syncing
-  syncNow().catch(() => {});       // pull/push in the background; a hiccup here must
-                                   // not undo the successful connection
-}
+// Full-page redirect to begin (or renew) sign-in. Returns nothing — the page
+// navigates away and comes back authenticated.
+export function startLogin() { window.location.assign('/api/auth/login'); }
 
 export async function disconnect() {
-  try { if (accessToken) google.accounts.oauth2.revoke(accessToken, () => {}); } catch (_) {}
-  accessToken = null; email = null; fileId = null; needsReconnect = false;
-  await persistToken(); // clears the stored token
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch (_) {}
+  accessToken = null; tokenExpiresAt = 0; email = null; fileId = null; needsReconnect = false;
   await db.setSetting('gdriveEnabled', false);
   await db.setSetting('gdriveEmail', null);
+  cbs.onStatusChange?.();
 }
 
 export async function init(callbacks) {
   cbs = callbacks || {};
+  email = await db.getSetting('gdriveEmail', null); // last-known email (shown while (re)connecting)
   db.onDataChange(() => { if (accessToken) schedulePush(); });
-  if (!(await db.getSetting('gdriveEnabled', false))) return;
 
-  email = await db.getSetting('gdriveEmail', null); // known email (shown even while reconnecting)
-
-  // 1) Reuse a still-valid token from a previous open — instant, no Google call.
-  //    (No background refresh: silent renewal needs a popup and gets blocked, so
-  //    we just use the saved token until it expires, then reconnect on demand.)
-  if (await loadPersistedToken()) {
+  const ok = await ensureToken();
+  if (ok === true) {
+    needsReconnect = false;
+    await db.setSetting('gdriveEnabled', true);
+    await db.setSetting('welcomeDone', true); // being signed in completes onboarding
     cbs.onStatusChange?.();
-    syncNow().catch(() => {}); // pull latest in the background
-    return;
+    syncNow().catch(() => {});
+  } else if (ok === 'UNAUTH' && await db.getSetting('gdriveEnabled', false)) {
+    needsReconnect = true; // was connected before; refresh token gone → one tap to reconnect
+    cbs.onStatusChange?.();
   }
-
-  // 2) No valid token — try a silent refresh (works on desktop; usually blocked
-  //    on installed iOS PWAs). On failure, keep working locally and surface a
-  //    one-tap reconnect rather than looking disconnected.
-  try { await connect(false); }
-  catch (_) { needsReconnect = true; cbs.onStatusChange?.(); }
+  // ok === false → backend unavailable (e.g. local preview); stay local-only, no banner.
 }
