@@ -570,7 +570,9 @@ let activeSettings = null;
 
 function updateSyncBanner() {
   const b = document.getElementById('syncBanner');
-  if (b) b.hidden = !sync.status().needsReconnect;
+  if (!b) return;
+  const st = sync.status();
+  b.hidden = st.connected || !st.needsReconnect; // never show while connected
 }
 
 async function renderGdriveBox(wrap) {

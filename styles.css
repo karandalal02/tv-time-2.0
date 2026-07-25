@@ -246,6 +246,9 @@ img { display: block; }
   padding: 9px 10px 9px 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
   box-shadow: 0 8px 30px rgba(0,0,0,0.45); max-width: 92%;
 }
+/* The class sets display:flex, which would otherwise override the `hidden`
+   attribute — this makes hidden actually hide the banner. */
+.sync-banner[hidden] { display: none; }
 
 .link { color: var(--accent); background: none; border: 0; font-weight: 700; font-size: 14px; padding: 0; }
 .back-btn { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--muted); background: none; border: 0; font-size: 15px; font-weight: 600; }
