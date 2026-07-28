@@ -158,19 +158,27 @@ function lastActivity(id) {
 }
 
 // ---------- TV lists ----------
-// Shows to watch next: a show jumps to the top the moment you mark an episode
-// watched (most recent activity first); shows with no activity yet fall back to
-// newest-added first.
-export function tvUpNext() {
+// Shows with an episode available to watch AND at least one episode already
+// watched — i.e. shows you've started. A show jumps to the top the moment you
+// mark an episode watched (most recent activity first).
+export function tvWatchNext() {
   return tvShows()
-    .filter((s) => s.listType === 'watching')
-    .map((s) => ({ show: s, next: nextEpisode(s) }))
-    .filter((x) => x.next)
+    .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
+    .filter((x) => x.next && x.watched >= 1)
     .sort((a, b) => (lastActivity(b.show.id) - lastActivity(a.show.id)) || (b.show.addedAt - a.show.addedAt));
 }
+// Shows with an episode available but not started yet (zero watched) —
+// covers both watchlist shows and freshly-added shows. Newest-added first.
+export function tvYetToStart() {
+  return tvShows()
+    .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
+    .filter((x) => x.next && x.watched === 0)
+    .sort((a, b) => b.show.addedAt - a.show.addedAt);
+}
+// Shows with no episode currently available: finished, or waiting on new ones.
 export function tvCaughtUp() {
   return tvShows()
-    .filter((s) => s.listType === 'watching' && !nextEpisode(s))
+    .filter((s) => !nextEpisode(s))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 export function tvWatchlist() {
@@ -204,14 +212,14 @@ export async function toggleMovieWatched(id, on) {
   return want;
 }
 
-// Movies to watch: unwatched AND already released. Most-recently-added first.
+// Movies to watch: unwatched AND already released. Newest release date first.
 // Unreleased movies are intentionally excluded — they live only in the
 // Future Releases (calendar) view.
 export function movieUpNext() {
   const t = today();
   return movies()
     .filter((m) => !m.watchedAt && !(m.releaseDate && m.releaseDate > t))
-    .sort((a, b) => b.addedAt - a.addedAt);
+    .sort((a, b) => (b.releaseDate || '').localeCompare(a.releaseDate || ''));
 }
 export function moviesWatched() {
   return movies().filter((m) => m.watchedAt).sort((a, b) => (b.watchedAt || '').localeCompare(a.watchedAt || ''));

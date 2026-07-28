@@ -124,14 +124,16 @@ function renderNeedKey() {
 
 // ---------- TV: Up Next ----------
 function renderTvUpNext() {
-  const next = store.tvUpNext();
+  const watchNext = store.tvWatchNext();
+  const yetToStart = store.tvYetToStart();
   const caught = store.tvCaughtUp();
   let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
-  if (!next.length && !caught.length) {
+  if (!watchNext.length && !yetToStart.length && !caught.length) {
     html += empty('🍿', 'No shows yet', 'Add a show from Search to start tracking.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a show</button>');
   } else {
-    if (next.length) html += `<div class="section-title">Watch Next</div>` + next.map(tvUpNextCard).join('');
+    if (watchNext.length) html += `<div class="section-title">Watch Next</div>` + watchNext.map(tvUpNextCard).join('');
+    if (yetToStart.length) html += `<div class="section-title">Yet to Start</div>` + yetToStart.map(tvUpNextCard).join('');
     if (caught.length) html += `<div class="section-title">All caught up</div>` + caught.map((s) => {
       const p = store.progress(s);
       const ended = store.isEnded(s);
