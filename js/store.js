@@ -175,11 +175,19 @@ export function tvYetToStart() {
     .filter((x) => x.next && x.watched === 0)
     .sort((a, b) => b.show.addedAt - a.show.addedAt);
 }
-// Shows with no episode currently available: finished, or waiting on new ones.
+// Shows with no episode currently available AND at least one episode has
+// already aired: finished, or waiting on a new one.
 export function tvCaughtUp() {
   return tvShows()
-    .filter((s) => !nextEpisode(s))
+    .filter((s) => !nextEpisode(s) && progress(s).aired > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+// Shows that haven't premiered yet — zero aired episodes, so there's nothing
+// to start or catch up on. Soonest-premiering first.
+export function tvYetToRelease() {
+  return tvShows()
+    .filter((s) => !nextEpisode(s) && progress(s).aired === 0)
+    .sort((a, b) => (a.firstAirDate || '9999-99-99').localeCompare(b.firstAirDate || '9999-99-99'));
 }
 export function tvWatchlist() {
   return tvShows().filter((s) => s.listType === 'watchlist').sort((a, b) => b.addedAt - a.addedAt);

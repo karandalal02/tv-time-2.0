@@ -127,8 +127,9 @@ function renderTvUpNext() {
   const watchNext = store.tvWatchNext();
   const yetToStart = store.tvYetToStart();
   const caught = store.tvCaughtUp();
+  const yetToRelease = store.tvYetToRelease();
   let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
-  if (!watchNext.length && !yetToStart.length && !caught.length) {
+  if (!watchNext.length && !yetToStart.length && !caught.length && !yetToRelease.length) {
     html += empty('🍿', 'No shows yet', 'Add a show from Search to start tracking.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a show</button>');
   } else {
@@ -147,6 +148,15 @@ function renderTvUpNext() {
         ${tvStatusPill(s)}
       </div>`;
     }).join('');
+    if (yetToRelease.length) html += `<div class="section-title">Yet to Release</div>` + yetToRelease.map((s) => `
+      <div class="row" data-open="${s.id}">
+        ${poster(s.poster)}
+        <div class="row__body">
+          <p class="row__title">${esc(s.name)}</p>
+          <p class="row__sub">${s.firstAirDate ? 'Premieres ' + fmtDate(s.firstAirDate) : 'No air date yet'}</p>
+        </div>
+        ${tvStatusPill(s)}
+      </div>`).join('');
   }
   view.innerHTML = html;
 }
