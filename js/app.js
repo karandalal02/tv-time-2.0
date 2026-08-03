@@ -618,6 +618,113 @@ async function renderGdriveBox(wrap) {
   };
 }
 
+// ---------- Backup (CSV) ----------
+// A real spreadsheet, not a JSON blob nobody would hand-edit. One row per
+// watched episode (plus one row for any show with nothing watched yet, so it
+// still round-trips), and one row per movie. Re-importing re-fetches full
+// show/episode details from TMDB using the stored ID — the CSV only needs to
+// carry the identifiers and your watched/rating state.
+function csvEscape(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+const csvRow = (fields) => fields.map(csvEscape).join(',');
+
+async function buildCsv() {
+  const watchedAt = new Map((await db.getAll('watched')).map((w) => [w.key, w.at]));
+  const lines = [csvRow(['Type', 'Title', 'TMDB ID', 'List', 'Season', 'Episode', 'Watched On', 'Rating'])];
+
+  for (const s of store.tvShows()) {
+    const rating = store.getRating(s.id) || '';
+    let any = false;
+    for (const season of s.seasons || []) {
+      for (const ep of season.episodes) {
+        if (store.isWatched(s.id, season.season_number, ep.episode_number)) {
+          any = true;
+          const at = (watchedAt.get(store.epKey(s.id, season.season_number, ep.episode_number)) || '').slice(0, 10);
+          lines.push(csvRow(['TV', s.name, s.tmdbId, s.listType, season.season_number, ep.episode_number, at, rating]));
+        }
+      }
+    }
+    if (!any) lines.push(csvRow(['TV', s.name, s.tmdbId, s.listType, '', '', '', rating]));
+  }
+  for (const m of store.movies()) {
+    const rating = store.getRating(m.id) || '';
+    lines.push(csvRow(['Movie', m.name, m.tmdbId, m.watchedAt ? 'watched' : 'towatch', '', '', (m.watchedAt || '').slice(0, 10), rating]));
+  }
+  return lines.join('\r\n');
+}
+
+// Minimal RFC4180-ish CSV parser: handles quoted fields with embedded commas,
+// quotes ("" escaping) and newlines.
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
+      else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0] !== '') rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+async function importCsv(text) {
+  const rows = parseCsv(text);
+  if (!rows.length) throw new Error('empty');
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (name) => header.indexOf(name);
+  const iType = col('type'), iTitle = col('title'), iId = col('tmdb id'), iList = col('list'),
+        iSeason = col('season'), iEpisode = col('episode'), iWatched = col('watched on'), iRating = col('rating');
+  if (iType < 0 || iId < 0) throw new Error('bad_header');
+
+  // ISO date-only string -> a stable timestamp for that day (noon, to avoid
+  // timezone edge cases shifting it to the previous/next day).
+  const toAt = (d) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) ? `${d.trim()}T12:00:00.000Z` : null;
+
+  const groups = new Map();
+  for (const r of rows.slice(1)) {
+    if (!r[iType] || !r[iId]) continue;
+    const type = r[iType].trim().toLowerCase();
+    const key = type + ':' + r[iId].trim();
+    if (!groups.has(key)) groups.set(key, { type, tmdbId: Number(r[iId]), title: r[iTitle], list: '', rating: 0, watchedAt: null, episodes: [] });
+    const g = groups.get(key);
+    if (r[iList]) g.list = r[iList].trim().toLowerCase();
+    if (iRating >= 0 && r[iRating]) g.rating = Number(r[iRating]) || g.rating;
+    const at = iWatched >= 0 ? toAt(r[iWatched]) : null;
+    if (at) g.watchedAt = at; // movies: the row's own date
+    if (iSeason >= 0 && iEpisode >= 0 && r[iSeason] && r[iEpisode]) g.episodes.push([Number(r[iSeason]), Number(r[iEpisode]), at]);
+  }
+
+  let ok = 0, failed = 0;
+  for (const g of groups.values()) {
+    try {
+      if (g.type === 'tv') {
+        const full = await api.getShowFull(g.tmdbId);
+        const rec = await store.addItem(full, g.list === 'watching' ? 'watching' : 'watchlist');
+        for (const [s, e, at] of g.episodes) await store.toggleWatched(rec.id, s, e, true, at);
+        if (g.rating) await store.setRating(rec.id, g.rating);
+      } else if (g.type === 'movie') {
+        const full = await api.getMovieFull(g.tmdbId);
+        const rec = await store.addItem(full, 'watchlist');
+        if (g.list === 'watched') await store.toggleMovieWatched(rec.id, true, g.watchedAt);
+        if (g.rating) await store.setRating(rec.id, g.rating);
+      } else continue;
+      ok++;
+    } catch (_) { failed++; }
+  }
+  return { ok, failed, total: groups.size };
+}
+
 // ---------- Settings modal ----------
 function openSettings() {
   const wrap = document.createElement('div');
@@ -631,10 +738,11 @@ function openSettings() {
       <p class="muted" style="font-size:12px;margin-top:8px">If you sign in with Google, your email and basic usage counts (how many shows/movies you've saved — never titles or watch history) are visible to the developer to help improve the app.</p>
       <label>Backup</label>
       <div class="btn-row">
-        <button class="btn grow" id="exportBtn">Export data</button>
-        <button class="btn grow" id="importBtn">Import data</button>
-        <input id="importFile" type="file" accept="application/json" hidden>
+        <button class="btn grow" id="exportBtn">Export CSV</button>
+        <button class="btn grow" id="importBtn">Import CSV</button>
+        <input id="importFile" type="file" accept=".csv,text/csv" hidden>
       </div>
+      <p class="muted" style="font-size:12px;margin-top:8px">A spreadsheet of your shows, movies, episodes watched, and ratings — opens in Excel, Numbers, or Google Sheets. Importing a previously exported file re-fetches show details, so it needs internet and may take a few seconds.</p>
       <label>Install on iPhone</label>
       <p>Open this page in <b>Safari</b> → tap <b>Share</b> → <b>Add to Home Screen</b>. TV Time 2.0 then opens fullscreen like a native app.</p>
       <div class="btn-row mt16"><button class="btn btn--ghost btn--block" id="closeSettings">Close</button></div>
@@ -647,15 +755,26 @@ function openSettings() {
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('#closeSettings').onclick = close;
   wrap.querySelector('#exportBtn').onclick = async () => {
-    const blob = new Blob([JSON.stringify(await db.exportAll(), null, 2)], { type: 'application/json' });
+    const blob = new Blob([await buildCsv()], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `tally-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click(); URL.revokeObjectURL(a.href);
+    a.download = `tvtime2-backup-${new Date().toISOString().slice(0, 10)}.csv`; a.click(); URL.revokeObjectURL(a.href);
   };
   wrap.querySelector('#importBtn').onclick = () => wrap.querySelector('#importFile').click();
   wrap.querySelector('#importFile').onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    try { await db.importAll(JSON.parse(await file.text())); await store.loadState(); toast('Data imported'); close(); render(); }
-    catch (_) { toast('Import failed'); }
+    const btn = wrap.querySelector('#importBtn');
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Importing…';
+    try {
+      const { ok, failed, total } = await importCsv(await file.text());
+      await store.loadState();
+      toast(failed ? `Imported ${ok}/${total} (${failed} failed)` : `Imported ${ok} item${ok === 1 ? '' : 's'}`);
+      close(); render();
+    } catch (_) {
+      toast('Import failed — check the CSV format');
+    } finally {
+      btn.disabled = false; btn.textContent = original;
+    }
   };
 }
 

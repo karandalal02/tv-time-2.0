@@ -84,11 +84,11 @@ export async function setRating(id, rating) {
 // ---------- TV: episodes & progress ----------
 export const isWatched = (id, s, e) => state.watched.has(epKey(id, s, e));
 
-export async function toggleWatched(id, s, e, on) {
+export async function toggleWatched(id, s, e, on, at) {
   const key = epKey(id, s, e);
   const want = on == null ? !state.watched.has(key) : on;
   if (want) {
-    state.watched.set(key, new Date().toISOString());
+    state.watched.set(key, at || new Date().toISOString());
     await db.put('watched', { key, showId: id, season: s, episode: e, at: state.watched.get(key) });
     const show = state.items.get(id);
     if (show && show.listType === 'watchlist') await setListType(id, 'watching');
@@ -212,10 +212,10 @@ export function tvCalendar() {
 // ---------- Movies ----------
 export const isMovieWatched = (m) => !!m.watchedAt;
 
-export async function toggleMovieWatched(id, on) {
+export async function toggleMovieWatched(id, on, at) {
   const m = state.items.get(id); if (!m) return;
   const want = on == null ? !m.watchedAt : on;
-  m.watchedAt = want ? new Date().toISOString() : null;
+  m.watchedAt = want ? (at || new Date().toISOString()) : null;
   await db.put('shows', m);
   return want;
 }
