@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TV Time 2.0 — Admin</title>
+<link rel="stylesheet" href="./styles.css" />
+<style>
+  body { max-width: 760px; margin: 0 auto; padding: 24px 16px 60px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 16px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .gate { max-width: 340px; margin: 90px auto 0; text-align: center; }
+  .gate input {
+    width: 100%; padding: 12px; border-radius: 11px; margin: 12px 0;
+    background: var(--bg-elev2); border: 1px solid var(--line); color: var(--text); font-size: 16px;
+  }
+</style>
+</head>
+<body>
+  <div id="gate" class="gate">
+    <h2>TV Time 2.0 — Admin</h2>
+    <p class="muted">Enter your admin key to view the usage roster.</p>
+    <input id="key" type="password" placeholder="Admin key" autocomplete="off" />
+    <button class="btn btn--accent btn--block" id="go">View roster</button>
+    <p id="err" class="muted" style="color:var(--danger);display:none;margin-top:10px">Wrong key, or the server isn't set up yet.</p>
+  </div>
+
+  <div id="content" style="display:none">
+    <h2>Usage roster</h2>
+    <p class="muted" id="summary"></p>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>Email</th><th>First seen</th><th>Last active</th><th>Shows</th><th>Movies</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmt = (iso) => iso ? new Date(iso).toLocaleString() : '—';
+
+  async function load(key) {
+    $('#err').style.display = 'none';
+    let res;
+    try { res = await fetch('/api/admin/users', { headers: { 'X-Admin-Key': key } }); }
+    catch (_) { $('#err').style.display = 'block'; return; }
+    if (!res.ok) { $('#err').style.display = 'block'; sessionStorage.removeItem('adminKey'); return; }
+
+    const { users } = await res.json();
+    sessionStorage.setItem('adminKey', key);
+    $('#gate').style.display = 'none';
+    $('#content').style.display = 'block';
+    const active = users.filter((u) => u.shows + u.movies > 0).length;
+    $('#summary').textContent = `${users.length} connected · ${active} have saved a show or movie`;
+    $('#rows').innerHTML = users.map((u) => `<tr>
+      <td>${esc(u.email)}</td>
+      <td>${fmt(u.firstSeen)}</td>
+      <td>${fmt(u.lastActive)}</td>
+      <td>${u.shows}</td>
+      <td>${u.movies}</td>
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">No one has connected yet.</td></tr>';
+  }
+
+  $('#go').onclick = () => load($('#key').value.trim());
+  $('#key').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#go').click(); });
+  const saved = sessionStorage.getItem('adminKey');
+  if (saved) load(saved);
+</script>
+</body>
+</html>

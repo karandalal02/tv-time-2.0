@@ -94,13 +94,28 @@ async function uploadFile(payload) {
 
 // ---------- core sync ----------
 async function push() {
+  const exported = await db.exportAll();
   await uploadFile({
     app: 'tvtime2', version: 2,
     savedAt: new Date().toISOString(),
     lastChangeAt: await db.getSetting('lastChangeAt', 0),
-    data: await db.exportAll()
+    data: exported
   });
   lastSyncAt = new Date();
+  reportUsage(exported.shows); // fire-and-forget; aggregate counts only
+}
+
+// Tells the backend how many shows/movies this account has saved — counts
+// only, never titles or watch history. Best-effort: a failure here (offline,
+// backend down, etc.) must never affect Drive sync.
+function reportUsage(shows) {
+  const showCount = (shows || []).filter((s) => s.mediaType === 'tv').length;
+  const movieCount = (shows || []).filter((s) => s.mediaType === 'movie').length;
+  fetch('/api/usage/report', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shows: showCount, movies: movieCount })
+  }).catch(() => {});
 }
 async function applyRemote(remote) {
   db.setSuppressChanges(true);

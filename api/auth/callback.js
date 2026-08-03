@@ -3,6 +3,7 @@
 // token, then store the refresh token in a Secure/HttpOnly first-party cookie.
 // The browser never sees the refresh token. Finally, redirect back to the app.
 import { exchangeCode, decodeEmail, serializeCookie, baseUrl } from '../_google.js';
+import { pipeline, configured } from '../_kv.js';
 
 const YEAR = 60 * 60 * 24 * 400; // ~13 months
 
@@ -24,6 +25,18 @@ export default async function handler(req, res) {
       serializeCookie('rt', encodeURIComponent(tok.refresh_token || ''), { maxAge: YEAR }),
       serializeCookie('em', encodeURIComponent(email), { maxAge: YEAR, httpOnly: false })
     ]);
+    // Best-effort usage roster entry: email + timestamps only (see api/_kv.js).
+    // Never blocks sign-in if this fails.
+    if (email && configured()) {
+      const now = new Date().toISOString();
+      try {
+        await pipeline([
+          ['SADD', 'users:index', email],
+          ['HSETNX', `user:${email}`, 'firstSeen', now],
+          ['HSET', `user:${email}`, 'email', email, 'lastActive', now]
+        ]);
+      } catch (_) { /* ignore */ }
+    }
     res.redirect(`${app}/?auth=ok`);
   } catch (_) {
     res.redirect(`${app}/?auth=fail`);

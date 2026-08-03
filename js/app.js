@@ -634,6 +634,7 @@ function openSettings() {
       <div class="btn-row"><button class="btn btn--accent grow" id="saveKey">Save key</button></div>
       <label>Google Drive sync</label>
       <div id="gdriveBox"><div class="spinner" style="margin:10px auto"></div></div>
+      <p class="muted" style="font-size:12px;margin-top:8px">If you sign in with Google, your email and basic usage counts (how many shows/movies you've saved — never titles or watch history) are visible to the developer to help improve the app.</p>
       <label>Backup</label>
       <div class="btn-row">
         <button class="btn grow" id="exportBtn">Export data</button>
