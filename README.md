@@ -92,8 +92,7 @@ index.html            app shell
 styles.css            styling (dark, mobile-first)
 manifest.webmanifest  PWA manifest
 sw.js                 service worker (offline + installable)
-make_icons.py         regenerates the app icons
-icons/                app icons
+icons/                app icons (180/192/512, generated from the logo)
 js/
   app.js              UI, routing, views
   api.js              TMDB client
