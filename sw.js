@@ -1,7 +1,7 @@
 // Service worker: caches the app shell so Tally launches offline and installs
 // as a PWA. TMDB API calls fall through to the network (and are cached
 // opportunistically so recently viewed shows keep working offline).
-const CACHE = 'tvtime2-v14';
+const CACHE = 'tvtime2-v16';
 const SHELL = [
   './',
   './index.html',
@@ -18,7 +18,11 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // Force each precache fetch to bypass the browser's regular HTTP cache —
+  // addAll() with plain URL strings can otherwise silently bake stale
+  // (HTTP-cached) files into a brand new service worker version.
+  const requests = SHELL.map((u) => new Request(u, { cache: 'reload' }));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(requests)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

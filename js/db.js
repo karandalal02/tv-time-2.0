@@ -86,23 +86,20 @@ export const db = {
   onDataChange(fn) { _onChange = fn; },
   setSuppressChanges(on) { _suppress = on; },
 
-  // Full export / import for backup and Drive sync. Includes the TMDB key so a
-  // restored device works immediately.
+  // Full export / import for backup and Drive sync.
   async exportAll() {
     return {
       version: 2,
       exportedAt: new Date().toISOString(),
       shows: await this.getAll('shows'),
       watched: await this.getAll('watched'),
-      ratings: await this.getAll('ratings'),
-      settings: { tmdbKey: await this.getSetting('tmdbKey', '') }
+      ratings: await this.getAll('ratings')
     };
   },
   async importAll(data) {
     for (const s of data.shows || []) await this.put('shows', s);
     for (const w of data.watched || []) await this.put('watched', w);
     for (const r of data.ratings || []) await this.put('ratings', r);
-    if (data.settings?.tmdbKey) await this.setSetting('tmdbKey', data.settings.tmdbKey);
   },
   // Replace local user data entirely (used when remote is newer).
   async replaceAll(data) {

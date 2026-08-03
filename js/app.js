@@ -626,12 +626,6 @@ function openSettings() {
     <div class="modal">
       <div class="modal__handle"></div>
       <h2>Settings</h2>
-      <label for="keyInput">TMDB API Key or Read Access Token</label>
-      <input id="keyInput" type="text" placeholder="${api.usingBuiltInKey() ? 'Built-in key active — paste your own to override' : 'Paste your key…'}" value="${esc(api.hasKey() && !api.usingBuiltInKey() ? '••••••••••••' : '')}">
-      <p>${api.usingBuiltInKey()
-        ? 'Show &amp; movie data comes with a built-in key — you\'re all set. Optionally use your own from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a>.'
-        : 'Free from <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org</a> → Settings → API. Paste the <b>API Key (v3)</b> or the <b>Read Access Token (v4)</b>. Stored only on this device.'}</p>
-      <div class="btn-row"><button class="btn btn--accent grow" id="saveKey">Save key</button></div>
       <label>Google Drive sync</label>
       <div id="gdriveBox"><div class="spinner" style="margin:10px auto"></div></div>
       <p class="muted" style="font-size:12px;margin-top:8px">If you sign in with Google, your email and basic usage counts (how many shows/movies you've saved — never titles or watch history) are visible to the developer to help improve the app.</p>
@@ -652,11 +646,6 @@ function openSettings() {
   const close = () => { activeSettings = null; wrap.remove(); };
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('#closeSettings').onclick = close;
-  wrap.querySelector('#saveKey').onclick = async () => {
-    const val = wrap.querySelector('#keyInput').value.trim();
-    if (!val || val.startsWith('•')) { toast('Enter a key'); return; }
-    await api.setKey(val); toast('Key saved'); close(); render();
-  };
   wrap.querySelector('#exportBtn').onclick = async () => {
     const blob = new Blob([JSON.stringify(await db.exportAll(), null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -675,7 +664,6 @@ async function init() {
   document.querySelectorAll('.tab').forEach((b) => (b.onclick = () => go(b.dataset.sec)));
   $('#settingsBtn').onclick = openSettings;
   $('#brand').onclick = () => go('tv');
-  await api.loadKey();
   await store.loadState();
   welcomeNeeded = !(await db.getSetting('welcomeDone', false)) && !(await db.getSetting('gdriveEnabled', false));
   syncTabs(); render();
@@ -699,7 +687,7 @@ async function init() {
   // Google Drive sync (via backend): fetch a fresh token, live status.
   sync.init({
     onRemoteApplied: async () => {
-      await api.loadKey(); await store.loadState(); render();
+      await store.loadState(); render();
       toast('Updated from Google Drive');
     },
     onStatusChange: () => {

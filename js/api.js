@@ -1,8 +1,6 @@
-// TMDB API client. Runs entirely client-side (TMDB allows browser CORS).
-// The user supplies their own free key in Settings; it's stored on-device.
-// Supports both a v3 API key and a v4 Read Access Token (auto-detected).
-import { db } from './db.js';
-import { TMDB_KEY as DEFAULT_KEY } from './config.js';
+// TMDB API client. Runs entirely client-side (TMDB allows browser CORS), using
+// the built-in key from config.js so the app works for everyone with no setup.
+import { TMDB_KEY } from './config.js';
 
 const BASE = 'https://api.themoviedb.org/3';
 export const IMG = {
@@ -10,31 +8,18 @@ export const IMG = {
   backdrop: (p, size = 'w780') => (p ? `https://image.tmdb.org/t/p/${size}${p}` : null)
 };
 
-let _key = null;       // key actually used for requests
-let _personal = null;  // key the user entered (overrides the built-in one)
-export async function loadKey() {
-  _personal = await db.getSetting('tmdbKey', '');
-  _key = _personal || DEFAULT_KEY;
-  return _key;
-}
-export async function setKey(k) {
-  _personal = (k || '').trim();
-  await db.setSetting('tmdbKey', _personal);
-  _key = _personal || DEFAULT_KEY;
-}
-export function hasKey() { return !!_key; }
-export function usingBuiltInKey() { return !_personal && !!DEFAULT_KEY; }
+export function hasKey() { return !!TMDB_KEY; }
 
 // A v4 token is a long JWT with dots; a v3 key is a 32-char hex string.
 function isV4(k) { return k && k.split('.').length === 3; }
 
 async function call(path, params = {}) {
-  if (!_key) throw new Error('NO_KEY');
+  if (!TMDB_KEY) throw new Error('NO_KEY');
   const url = new URL(BASE + path);
   Object.entries(params).forEach(([k, v]) => v != null && url.searchParams.set(k, v));
   const opts = { headers: { accept: 'application/json' } };
-  if (isV4(_key)) opts.headers.authorization = `Bearer ${_key}`;
-  else url.searchParams.set('api_key', _key);
+  if (isV4(TMDB_KEY)) opts.headers.authorization = `Bearer ${TMDB_KEY}`;
+  else url.searchParams.set('api_key', TMDB_KEY);
 
   const res = await fetch(url, opts);
   if (res.status === 401) throw new Error('BAD_KEY');
