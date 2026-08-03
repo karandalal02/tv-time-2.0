@@ -117,6 +117,12 @@ function reportUsage(shows) {
     body: JSON.stringify({ shows: showCount, movies: movieCount })
   }).catch(() => {});
 }
+// Also report right after confirming a connection (not just after a data
+// change) — so simply opening the app while signed in is enough to appear in
+// the roster, with no dependency on change timing.
+async function reportUsageNow() {
+  try { reportUsage((await db.exportAll()).shows); } catch (_) {}
+}
 async function applyRemote(remote) {
   db.setSuppressChanges(true);
   try {
@@ -174,6 +180,7 @@ export async function init(callbacks) {
     await db.setSetting('welcomeDone', true); // being signed in completes onboarding
     cbs.onStatusChange?.();
     syncNow().catch(() => {});
+    reportUsageNow();
   } else if (ok === 'UNAUTH' && await db.getSetting('gdriveEnabled', false)) {
     needsReconnect = true; // was connected before; refresh token gone → one tap to reconnect
     cbs.onStatusChange?.();
