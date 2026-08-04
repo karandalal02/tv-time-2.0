@@ -15,6 +15,10 @@ Everything is stored **locally on your device** — no account, no server, no tr
 It's a **PWA** (Progressive Web App): plain HTML/CSS/JavaScript, no build step,
 no Node. Add it to your iPhone Home Screen and it behaves like a native app.
 
+See [docs/architecture.svg](docs/architecture.svg) for a full system diagram
+(GitHub → Vercel → browser/PWA → TMDB, Google Drive, Upstash Redis), or open
+[docs/architecture.html](docs/architecture.html) for the interactive version.
+
 ---
 
 ## 1. Get a free TMDB key (2 minutes)
