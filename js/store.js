@@ -47,6 +47,7 @@ export async function loadState() {
   for (const s of await db.getAll('shows')) state.items.set(s.id, s);
   for (const w of await db.getAll('watched')) state.watched.set(w.key, w.at);
   for (const r of await db.getAll('ratings')) state.ratings.set(r.showId, r.rating);
+  await reconcileQueueRanks();
 }
 
 // ---------- generic item helpers ----------
@@ -162,33 +163,55 @@ const daysSince = (dateStr) => dateStr ? (Date.now() - Date.parse(dateStr + 'T00
 const GRACE_DAYS = 7;
 const tracked = () => tvShows().filter((s) => s.listType !== 'stopped');
 
-// Shows with an episode available to watch, where either (a) you've watched
-// at least one episode already, or (b) it aired within the last 7 days — a
-// freshly-released show gets a grace period here before falling to Yet to
-// Start, so it doesn't look ignored the moment it drops.
-// Sort key: real watch activity if any, else the release date (while still
-// in its grace window) — whichever is more recent wins the top spot.
-export function tvWatchNext() {
-  return tracked()
-    .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
-    .filter((x) => x.next && (x.watched >= 1 || daysSince(x.show.firstAirDate) <= GRACE_DAYS))
-    .sort((a, b) => {
-      const sig = (x) => {
-        const act = lastActivity(x.show.id);
-        if (act) return act;
-        return daysSince(x.show.firstAirDate) <= GRACE_DAYS ? Date.parse(x.show.firstAirDate + 'T00:00:00') : 0;
-      };
-      return (sig(b) - sig(a)) || (b.show.addedAt - a.show.addedAt);
-    });
+// Was this show being anticipated — added to the library while still unaired
+// — rather than added after the fact once it already existed? Only shows
+// that were genuinely "Yet to Release" for this user get the release-grace
+// treatment; adding an already-out show never grants it, no matter how
+// recently it happened to air.
+function wasAnticipated(show) {
+  return !!show.firstAirDate && show.addedAt < Date.parse(show.firstAirDate + 'T00:00:00');
 }
-// Shows with an episode available, zero watched, and past the 7-day grace
-// window — i.e. genuinely sitting unstarted. Most-recently-released first, so
-// a show that just crossed the 7-day mark surfaces above older neglected ones.
+// A demoted show's rank is frozen the moment it falls out of grace, so it
+// doesn't keep drifting as more days pass — it just sits where it landed
+// until something else demotes above it. Checked once per load; idempotent.
+export async function reconcileQueueRanks() {
+  for (const s of tvShows()) {
+    if (s.yetToStartRank || progress(s).watched > 0) continue;
+    if (wasAnticipated(s) && progress(s).aired > 0 && daysSince(s.firstAirDate) > GRACE_DAYS) {
+      s.yetToStartRank = Date.now();
+      await db.put('shows', s);
+    }
+  }
+}
+
+// Watch Next is two stacked tiers:
+//  1. Shows you were anticipating that just released, still unwatched, within
+//     their 7-day grace window — always above everything else, no matter how
+//     recent your actual watch activity is.
+//  2. Shows with real progress — most recently watched first, as before.
+export function tvWatchNext() {
+  const inGrace = (s) => wasAnticipated(s) && progress(s).aired > 0 && daysSince(s.firstAirDate) <= GRACE_DAYS;
+  const tier1 = tracked()
+    .filter((s) => nextEpisode(s) && progress(s).watched === 0 && inGrace(s))
+    .sort((a, b) => (b.firstAirDate || '').localeCompare(a.firstAirDate || ''));
+  const tier2 = tracked()
+    .map((s) => ({ show: s, watched: progress(s).watched }))
+    .filter((x) => nextEpisode(x.show) && x.watched >= 1)
+    .sort((a, b) => (lastActivity(b.show.id) - lastActivity(a.show.id)) || (b.show.addedAt - a.show.addedAt))
+    .map((x) => x.show);
+  return [...tier1, ...tier2].map((s) => ({ show: s, next: nextEpisode(s) }));
+}
+// Unwatched shows with an episode available, excluding anything still in its
+// Watch Next grace window. Sorted by "when this became relevant to you" —
+// either when you added it (shows added after they'd already aired), or when
+// it fell out of grace (shows that were anticipated and then went unwatched)
+// — both on the same timeline so they compare fairly against each other.
 export function tvYetToStart() {
+  const inGrace = (s) => wasAnticipated(s) && progress(s).aired > 0 && daysSince(s.firstAirDate) <= GRACE_DAYS;
   return tracked()
     .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
-    .filter((x) => x.next && x.watched === 0 && daysSince(x.show.firstAirDate) > GRACE_DAYS)
-    .sort((a, b) => (b.show.firstAirDate || '').localeCompare(a.show.firstAirDate || ''));
+    .filter((x) => x.next && x.watched === 0 && !inGrace(x.show))
+    .sort((a, b) => ((b.show.yetToStartRank || b.show.addedAt) - (a.show.yetToStartRank || a.show.addedAt)));
 }
 // Shows with no episode currently available AND at least one episode has
 // already aired: finished, or waiting on a new one.

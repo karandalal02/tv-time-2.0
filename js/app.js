@@ -482,7 +482,7 @@ async function renderTvDetail(id) {
         <button class="btn grow" data-move="watchlist">Move to Watchlist</button>
         <button class="btn btn--ghost" data-remove style="color:var(--danger)">Remove</button></div>
         <div class="btn-row mt8">
-        <button class="btn btn--ghost btn--block" data-move="stopped">⏸ Stop watching</button></div>`;
+        <button class="btn btn--ghost btn--block" data-move="stopped" style="color:var(--danger)">⏹ Stop watching</button></div>`;
     }
   }
 
