@@ -5,7 +5,13 @@ import { db } from './db.js';
 
 export const cid = (mediaType, tmdbId) => `${mediaType}:${tmdbId}`;
 export const epKey = (id, s, e) => `${id}:${s}:${e}`;
-export const today = () => new Date().toISOString().slice(0, 10);
+// Local calendar date, not UTC — toISOString() would roll over to "tomorrow"
+// hours early for anyone west of UTC (e.g. ~8pm-midnight local in US time
+// zones), making a not-yet-aired episode look aired.
+export const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const isAired = (d) => !!d && d <= today();
 
 const state = {
