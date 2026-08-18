@@ -119,6 +119,11 @@ img { display: block; }
 .pill--good { color: var(--good); border-color: rgba(55,211,155,0.35); }
 .pill--warn { color: var(--warn); border-color: rgba(240,169,75,0.35); }
 
+/* Countdown badge — Yet to Release rows. The number carries the anticipation. */
+.countdown { display: flex; flex-direction: column; align-items: center; line-height: 1.05; flex: none; }
+.countdown__num { font-size: 20px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+.countdown__label { font-size: 10px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .4px; }
+
 /* Progress bar */
 .progress { height: 6px; border-radius: 999px; background: var(--bg-elev2); overflow: hidden; margin-top: 8px; }
 .progress__fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); border-radius: 999px; transition: width .25s ease; }

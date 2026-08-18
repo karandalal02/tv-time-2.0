@@ -91,7 +91,7 @@ export async function toggleWatched(id, s, e, on, at) {
     state.watched.set(key, at || new Date().toISOString());
     await db.put('watched', { key, showId: id, season: s, episode: e, at: state.watched.get(key) });
     const show = state.items.get(id);
-    if (show && show.listType === 'watchlist') await setListType(id, 'watching');
+    if (show && (show.listType === 'watchlist' || show.listType === 'stopped')) await setListType(id, 'watching');
   } else {
     state.watched.delete(key);
     await db.del('watched', key);
@@ -157,37 +157,58 @@ function lastActivity(id) {
   return latest;
 }
 
-// ---------- TV lists ----------
-// Shows with an episode available to watch AND at least one episode already
-// watched — i.e. shows you've started. A show jumps to the top the moment you
-// mark an episode watched (most recent activity first).
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysSince = (dateStr) => dateStr ? (Date.now() - Date.parse(dateStr + 'T00:00:00')) / DAY_MS : Infinity;
+const GRACE_DAYS = 7;
+const tracked = () => tvShows().filter((s) => s.listType !== 'stopped');
+
+// Shows with an episode available to watch, where either (a) you've watched
+// at least one episode already, or (b) it aired within the last 7 days — a
+// freshly-released show gets a grace period here before falling to Yet to
+// Start, so it doesn't look ignored the moment it drops.
+// Sort key: real watch activity if any, else the release date (while still
+// in its grace window) — whichever is more recent wins the top spot.
 export function tvWatchNext() {
-  return tvShows()
+  return tracked()
     .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
-    .filter((x) => x.next && x.watched >= 1)
-    .sort((a, b) => (lastActivity(b.show.id) - lastActivity(a.show.id)) || (b.show.addedAt - a.show.addedAt));
+    .filter((x) => x.next && (x.watched >= 1 || daysSince(x.show.firstAirDate) <= GRACE_DAYS))
+    .sort((a, b) => {
+      const sig = (x) => {
+        const act = lastActivity(x.show.id);
+        if (act) return act;
+        return daysSince(x.show.firstAirDate) <= GRACE_DAYS ? Date.parse(x.show.firstAirDate + 'T00:00:00') : 0;
+      };
+      return (sig(b) - sig(a)) || (b.show.addedAt - a.show.addedAt);
+    });
 }
-// Shows with an episode available but not started yet (zero watched) —
-// covers both watchlist shows and freshly-added shows. Newest-added first.
+// Shows with an episode available, zero watched, and past the 7-day grace
+// window — i.e. genuinely sitting unstarted. Most-recently-released first, so
+// a show that just crossed the 7-day mark surfaces above older neglected ones.
 export function tvYetToStart() {
-  return tvShows()
+  return tracked()
     .map((s) => ({ show: s, next: nextEpisode(s), watched: progress(s).watched }))
-    .filter((x) => x.next && x.watched === 0)
-    .sort((a, b) => b.show.addedAt - a.show.addedAt);
+    .filter((x) => x.next && x.watched === 0 && daysSince(x.show.firstAirDate) > GRACE_DAYS)
+    .sort((a, b) => (b.show.firstAirDate || '').localeCompare(a.show.firstAirDate || ''));
 }
 // Shows with no episode currently available AND at least one episode has
 // already aired: finished, or waiting on a new one.
 export function tvCaughtUp() {
-  return tvShows()
+  return tracked()
     .filter((s) => !nextEpisode(s) && progress(s).aired > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 // Shows that haven't premiered yet — zero aired episodes, so there's nothing
 // to start or catch up on. Soonest-premiering first.
 export function tvYetToRelease() {
-  return tvShows()
+  return tracked()
     .filter((s) => !nextEpisode(s) && progress(s).aired === 0)
     .sort((a, b) => (a.firstAirDate || '9999-99-99').localeCompare(b.firstAirDate || '9999-99-99'));
+}
+// Shows you've deliberately set aside — kept off Watch Next/Yet to Start/
+// Caught Up so your active queue doesn't grow forever, without losing your
+// watch history. Alphabetical; low-traffic section, no need for recency sort.
+export function tvStopped() {
+  return tvShows().filter((s) => s.listType === 'stopped').sort((a, b) => a.name.localeCompare(b.name));
 }
 export function tvWatchlist() {
   return tvShows().filter((s) => s.listType === 'watchlist').sort((a, b) => b.addedAt - a.addedAt);

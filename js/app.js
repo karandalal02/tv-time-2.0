@@ -37,10 +37,24 @@ function dayLabel(iso) {
 const sxe = (s, e) => `S${s}E${e}`;
 const isMovieId = (id) => id.startsWith('movie:');
 
+// A prominent "releasing in X days" badge — the big number is the point,
+// meant to build anticipation rather than just state a fact like a status pill.
+function countdownBadge(dateStr) {
+  if (!dateStr) return `<span class="pill">TBA</span>`;
+  const days = Math.ceil((Date.parse(dateStr + 'T00:00:00') - Date.now()) / 86400000);
+  if (days <= 0) return `<div class="countdown"><span class="countdown__num">Today</span></div>`;
+  return `<div class="countdown"><span class="countdown__num">${days}</span><span class="countdown__label">day${days === 1 ? '' : 's'}</span></div>`;
+}
+
+// Personal-progress status, not real-world broadcast status — "Ended" on TMDB
+// doesn't tell you anything useful here; whether you're caught up does.
 function tvStatusPill(show) {
-  if (/canceled|cancelled/i.test(show.status)) return `<span class="pill pill--warn">Canceled</span>`;
-  if (store.isEnded(show)) return `<span class="pill">Ended</span>`;
-  return `<span class="pill pill--good">Ongoing</span>`;
+  if (show.listType === 'stopped') return `<span class="pill">Stopped</span>`;
+  const p = store.progress(show);
+  if (p.aired === 0) return `<span class="pill pill--warn">Yet to release</span>`;
+  if (p.watched >= p.aired) return `<span class="pill pill--good">Caught up</span>`;
+  if (show.listType === 'watching') return `<span class="pill pill--good">Ongoing</span>`;
+  return `<span class="pill">Not started</span>`;
 }
 
 // ---------- routing ----------
@@ -128,8 +142,9 @@ function renderTvUpNext() {
   const yetToStart = store.tvYetToStart();
   const caught = store.tvCaughtUp();
   const yetToRelease = store.tvYetToRelease();
+  const stopped = store.tvStopped();
   let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
-  if (!watchNext.length && !yetToStart.length && !caught.length && !yetToRelease.length) {
+  if (!watchNext.length && !yetToStart.length && !caught.length && !yetToRelease.length && !stopped.length) {
     html += empty('🍿', 'No shows yet', 'Add a show from Search to start tracking.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a show</button>');
   } else {
@@ -155,8 +170,19 @@ function renderTvUpNext() {
           <p class="row__title">${esc(s.name)}</p>
           <p class="row__sub">${s.firstAirDate ? 'Premieres ' + fmtDate(s.firstAirDate) : 'No air date yet'}</p>
         </div>
-        ${tvStatusPill(s)}
+        ${countdownBadge(s.firstAirDate)}
       </div>`).join('');
+    if (stopped.length) html += `<div class="section-title">Stopped</div>` + stopped.map((s) => {
+      const p = store.progress(s);
+      return `<div class="row" data-open="${s.id}">
+        ${poster(s.poster)}
+        <div class="row__body">
+          <p class="row__title">${esc(s.name)}</p>
+          <p class="row__sub">${p.watched}/${p.total} watched</p>
+        </div>
+        ${tvStatusPill(s)}
+      </div>`;
+    }).join('');
   }
   view.innerHTML = html;
 }
@@ -331,13 +357,17 @@ function tvLibRow(s) {
 }
 function movieLibRow(m) {
   const rating = store.getRating(m.id);
+  const upcoming = m.releaseDate && m.releaseDate > store.today();
+  const pill = m.watchedAt ? { cls: 'pill--good', text: '✓ Watched' }
+    : upcoming ? { cls: 'pill--warn', text: 'Yet to release' }
+    : { cls: '', text: 'Yet to watch' };
   return `<div class="row" data-open="${m.id}">
     ${poster(m.poster, 'poster', '🎬')}
     <div class="row__body">
       <p class="row__title">${esc(m.name)}</p>
       <p class="row__sub">${(m.releaseDate || '').slice(0, 4) || '—'}${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}</p>
     </div>
-    <span class="pill ${m.watchedAt ? 'pill--good' : ''}">${m.watchedAt ? '✓ Watched' : 'To watch'}</span>
+    <span class="pill ${pill.cls}">${pill.text}</span>
   </div>`;
 }
 
@@ -438,11 +468,23 @@ async function renderTvDetail(id) {
   }).join('');
 
   let footer = '';
-  if (saved) footer = `<div class="btn-row mt16">
-    ${show.listType === 'watchlist'
-      ? `<button class="btn btn--accent grow" data-move="watching">Move to Watching</button>`
-      : `<button class="btn grow" data-move="watchlist">Move to Watchlist</button>`}
-    <button class="btn btn--ghost" data-remove style="color:var(--danger)">Remove</button></div>`;
+  if (saved) {
+    if (show.listType === 'watchlist') {
+      footer = `<div class="btn-row mt16">
+        <button class="btn btn--accent grow" data-move="watching">Move to Watching</button>
+        <button class="btn btn--ghost" data-remove style="color:var(--danger)">Remove</button></div>`;
+    } else if (show.listType === 'stopped') {
+      footer = `<div class="btn-row mt16">
+        <button class="btn btn--accent grow" data-move="watching">▶ Resume watching</button>
+        <button class="btn btn--ghost" data-remove style="color:var(--danger)">Remove</button></div>`;
+    } else {
+      footer = `<div class="btn-row mt16">
+        <button class="btn grow" data-move="watchlist">Move to Watchlist</button>
+        <button class="btn btn--ghost" data-remove style="color:var(--danger)">Remove</button></div>
+        <div class="btn-row mt8">
+        <button class="btn btn--ghost btn--block" data-move="stopped">⏸ Stop watching</button></div>`;
+    }
+  }
 
   view.innerHTML = heroHTML(show, meta, '▦') + actions + overview + `<div class="section-title">Episodes</div>` + seasons + footer;
 }
