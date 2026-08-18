@@ -46,13 +46,16 @@ function countdownBadge(dateStr) {
   return `<div class="countdown"><span class="countdown__num">${days}</span><span class="countdown__label">day${days === 1 ? '' : 's'}</span></div>`;
 }
 
-// Personal-progress status, not real-world broadcast status — "Ended" on TMDB
-// doesn't tell you anything useful here; whether you're caught up does.
+// Personal-progress status, not real-world broadcast status — except once
+// you're fully caught up, where "the show itself is done" (Ended/Canceled,
+// folded together) is more useful than "Caught up", since nothing more is
+// ever coming. Partial progress still shows Ongoing/Not started regardless
+// of broadcast status — this app is about your tracking, not the show's.
 function tvStatusPill(show) {
   if (show.listType === 'stopped') return `<span class="pill">Stopped</span>`;
   const p = store.progress(show);
   if (p.aired === 0) return `<span class="pill pill--warn">Yet to release</span>`;
-  if (p.watched >= p.aired) return `<span class="pill pill--good">Caught up</span>`;
+  if (p.watched >= p.aired) return store.isEnded(show) ? `<span class="pill">Ended</span>` : `<span class="pill pill--good">Caught up</span>`;
   if (show.listType === 'watching') return `<span class="pill pill--good">Ongoing</span>`;
   return `<span class="pill">Not started</span>`;
 }
