@@ -419,16 +419,46 @@ function starsHTML(id) {
     `<button data-star="${n}" class="${n <= rating ? 'on' : ''}">★</button>`).join('')}</div>`;
 }
 
+// IMDb rating on line one, your own rating on line two — only the lines that
+// currently apply are shown (IMDb once fetched and non-empty; "My rating"
+// only once you're actually eligible to rate it).
+function ratingsBlock(item) {
+  const rows = [];
+  if (item.imdbRating != null) {
+    rows.push(`<p class="ratings-row"><span class="ratings-label">IMDb</span><span class="ratings-value">${item.imdbRating.toFixed(1)}</span></p>`);
+  }
+  if (store.canRate(item)) {
+    rows.push(`<p class="ratings-row"><span class="ratings-label">My rating</span>${starsHTML(item.id)}</p>`);
+  }
+  return rows.length ? `<div class="ratings-block">${rows.join('')}</div>` : '';
+}
+
+// Fetches an item's IMDb rating at most once (cached on the record), without
+// blocking the rest of the detail page. Failures (offline, OMDb rate limit)
+// are swallowed — imdbRating stays unset so the app tries again next visit,
+// and the missing rating just never appears rather than showing an error.
+async function ensureImdbRating(item) {
+  if (item.imdbRating !== undefined) return;
+  if (!item.imdbId) { item.imdbRating = null; return; }
+  try {
+    const rating = await api.getImdbRating(item.imdbId);
+    item.imdbRating = rating;
+    if (store.inLibrary(item.id)) await store.cacheImdbRating(item.id, rating);
+    if (detailId === item.id) render();
+  } catch (_) { /* leave unset; retried on next open */ }
+}
+
 // ---------- Detail: TV ----------
 async function renderTvDetail(id) {
   let show = store.getItem(id) || tempItems.get(id);
   const saved = store.inLibrary(id);
   if (!show) {
     spinner();
-    try { show = await api.getShowFull(Number(id.split(':')[1])); tempItems.set(id, { ...show, id }); }
+    try { show = { ...(await api.getShowFull(Number(id.split(':')[1]))), id }; tempItems.set(id, show); }
     catch (err) { view.innerHTML = `<button class="back-btn" data-back>‹ Back</button>` + errorBox(err); const f = $('#fixKey'); if (f) f.onclick = openSettings; return; }
     if (detailId !== id) return;
   }
+  ensureImdbRating(show);
 
   const p = store.progress(show);
   const pct = p.aired ? Math.round((p.watched / p.aired) * 100) : 0;
@@ -444,7 +474,7 @@ async function renderTvDetail(id) {
     <button class="btn btn--good btn--block mt8" data-add-all>✓ I've watched the whole show</button>`;
   } else {
     actions = `
-      <div class="hstack" style="justify-content:space-between">${starsHTML(id)}<span class="pill">${p.watched}/${p.aired || p.total} watched</span></div>
+      <div class="hstack" style="justify-content:flex-end"><span class="pill">${p.watched}/${p.aired || p.total} watched</span></div>
       <div class="progress mt8"><div class="progress__fill" style="width:${pct}%"></div></div>
       <button class="btn ${allWatched ? '' : 'btn--good'} btn--block mt16" data-showwatch data-on="${allWatched ? '0' : '1'}">
         ${allWatched ? 'Unmark whole show' : '✓ Mark whole show watched'}</button>`;
@@ -489,7 +519,7 @@ async function renderTvDetail(id) {
     }
   }
 
-  view.innerHTML = heroHTML(show, meta, '▦') + actions + overview + `<div class="section-title">Episodes</div>` + seasons + footer;
+  view.innerHTML = heroHTML(show, meta, '▦') + ratingsBlock(show) + actions + overview + `<div class="section-title">Episodes</div>` + seasons + footer;
 }
 function epRow(id, seasonNumber, e, saved) {
   const watched = store.isWatched(id, seasonNumber, e.episode_number);
@@ -510,10 +540,11 @@ async function renderMovieDetail(id) {
   const saved = store.inLibrary(id);
   if (!m) {
     spinner();
-    try { m = await api.getMovieFull(Number(id.split(':')[1])); tempItems.set(id, { ...m, id }); }
+    try { m = { ...(await api.getMovieFull(Number(id.split(':')[1]))), id }; tempItems.set(id, m); }
     catch (err) { view.innerHTML = `<button class="back-btn" data-back>‹ Back</button>` + errorBox(err); const f = $('#fixKey'); if (f) f.onclick = openSettings; return; }
     if (detailId !== id) return;
   }
+  ensureImdbRating(m);
 
   const upcoming = m.releaseDate && m.releaseDate > store.today();
   const statusPill = upcoming ? `<span class="pill pill--warn">Coming ${fmtDate(m.releaseDate)}</span>`
@@ -527,13 +558,12 @@ async function renderMovieDetail(id) {
       <button class="btn btn--accent grow" data-add-movie="watchlist">☆ Watchlist</button>
     </div>`;
   } else {
-    actions = `<div class="hstack" style="justify-content:space-between">${starsHTML(id)}${statusPill || '<span></span>'}</div>
-      <button class="btn ${m.watchedAt ? '' : 'btn--good'} btn--block mt16" data-moviewatch="${id}">
+    actions = `<button class="btn ${m.watchedAt ? '' : 'btn--good'} btn--block mt16" data-moviewatch="${id}">
         ${m.watchedAt ? 'Mark as unwatched' : '✓ Mark watched'}</button>
       <div class="btn-row mt8"><button class="btn btn--ghost btn--block" data-remove style="color:var(--danger)">Remove</button></div>`;
   }
   const overview = m.overview ? `<p class="muted mt16" style="font-size:14px;line-height:1.5">${esc(m.overview)}</p>` : '';
-  view.innerHTML = heroHTML(m, meta, '🎬') + actions + overview;
+  view.innerHTML = heroHTML(m, meta, '🎬') + ratingsBlock(m) + actions + overview;
 }
 
 // ---------- click handling ----------

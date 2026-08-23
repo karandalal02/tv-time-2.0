@@ -87,6 +87,23 @@ export async function setRating(id, rating) {
   if (rating > 0) { state.ratings.set(id, rating); await db.put('ratings', { showId: id, rating, at: new Date().toISOString() }); }
   else { state.ratings.delete(id); await db.del('ratings', id); }
 }
+// Rating only makes sense once you've actually watched something — at least
+// one episode for a show, or the whole thing for a movie (binary, no partial
+// state). An unsaved/preview item always has zero watched by construction
+// (episodes can't be marked watched until it's in the library), so this is
+// naturally false for anything not yet added — no separate check needed.
+export function canRate(item) {
+  return item.mediaType === 'movie' ? !!item.watchedAt : progress(item).watched >= 1;
+}
+// Persists a fetched IMDb rating onto an already-saved item. A no-op for
+// unsaved/preview items — the caller (app.js) holds those in memory only and
+// mutates them directly; they get cached for real once actually added.
+export async function cacheImdbRating(id, rating) {
+  const item = state.items.get(id);
+  if (!item) return;
+  item.imdbRating = rating;
+  await db.put('shows', item);
+}
 
 // ---------- TV: episodes & progress ----------
 export const isWatched = (id, s, e) => state.watched.has(epKey(id, s, e));

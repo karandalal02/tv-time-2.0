@@ -1,6 +1,6 @@
 // TMDB API client. Runs entirely client-side (TMDB allows browser CORS), using
 // the built-in key from config.js so the app works for everyone with no setup.
-import { TMDB_KEY } from './config.js';
+import { TMDB_KEY, OMDB_KEY } from './config.js';
 
 const BASE = 'https://api.themoviedb.org/3';
 export const IMG = {
@@ -43,7 +43,7 @@ export async function searchMulti(query) {
 
 // Full TV record with every season's episodes, ready to store locally.
 export async function getShowFull(tmdbId) {
-  const show = await call('/tv/' + tmdbId);
+  const show = await call('/tv/' + tmdbId, { append_to_response: 'external_ids' });
   const seasonNumbers = (show.seasons || [])
     .map((s) => s.season_number)
     .filter((n) => n >= 1); // skip season 0 (specials) by default
@@ -80,6 +80,7 @@ export async function getShowFull(tmdbId) {
     overview: show.overview || '',
     genres: (show.genres || []).map((g) => g.name),
     defaultRuntime: show.episode_run_time?.[0] || null,
+    imdbId: show.external_ids?.imdb_id || null,
     seasons
   };
 }
@@ -97,6 +98,29 @@ export async function getMovieFull(tmdbId) {
     status: m.status || '',                    // Released, Post Production, Planned…
     runtime: m.runtime || null,
     overview: m.overview || '',
-    genres: (m.genres || []).map((g) => g.name)
+    genres: (m.genres || []).map((g) => g.name),
+    imdbId: m.imdb_id || null
   };
+}
+
+// IMDb rating via OMDb (by IMDb ID, which TMDB already gives us for free).
+// Returns a number, or null if OMDb has no rating for this title (a real,
+// cacheable fact — distinct from a network/rate-limit failure, which throws
+// instead so the caller can retry later rather than caching "no rating").
+export async function getImdbRating(imdbId) {
+  if (!imdbId || !OMDB_KEY) return null;
+  const url = new URL('https://www.omdbapi.com/');
+  url.searchParams.set('i', imdbId);
+  url.searchParams.set('apikey', OMDB_KEY);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('OMDB_HTTP_' + res.status);
+  const data = await res.json();
+  if (data.Response === 'False') {
+    // "Request limit reached" etc. should be retried later, not cached as
+    // "no rating" — only a genuine per-title miss gets cached as null.
+    if (/limit/i.test(data.Error || '')) throw new Error('OMDB_LIMIT');
+    return null;
+  }
+  const rating = parseFloat(data.imdbRating);
+  return Number.isFinite(rating) ? rating : null;
 }
