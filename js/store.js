@@ -17,7 +17,8 @@ const isAired = (d) => !!d && d <= today();
 const state = {
   items: new Map(),    // id -> record (tv or movie)
   watched: new Map(),  // 'id:s:e' -> ISO timestamp (TV episodes only)
-  ratings: new Map()   // id -> rating (1-5)
+  ratings: new Map(),  // id -> rating (1-5)
+  lists: new Map()     // id -> { id, name, itemIds, createdAt }
 };
 
 // One-time migration from the original v1 schema (numeric TMDB ids, TV-only).
@@ -49,10 +50,11 @@ async function migrateLegacy() {
 
 export async function loadState() {
   await migrateLegacy();
-  state.items.clear(); state.watched.clear(); state.ratings.clear();
+  state.items.clear(); state.watched.clear(); state.ratings.clear(); state.lists.clear();
   for (const s of await db.getAll('shows')) state.items.set(s.id, s);
   for (const w of await db.getAll('watched')) state.watched.set(w.key, w.at);
   for (const r of await db.getAll('ratings')) state.ratings.set(r.showId, r.rating);
+  for (const l of await db.getAll('lists')) state.lists.set(l.id, l);
   await reconcileQueueRanks();
 }
 
@@ -79,6 +81,9 @@ export async function removeItem(id) {
   await db.del('shows', id); await db.del('ratings', id);
   for (const key of [...state.watched.keys()]) if (key.startsWith(id + ':')) state.watched.delete(key);
   await db.delWhere('watched', (w) => w.showId === id);
+  // List membership is a subset of tracked items — untracking must not leave
+  // a dangling reference behind (would silently miscount a list's items).
+  for (const l of listsContaining(id)) await removeFromList(l.id, id);
 }
 
 // ---------- ratings ----------
@@ -307,6 +312,70 @@ export function moviesByRecent() {
     return rb - ra;
   });
 }
+// ---------- Lists ----------
+// A list is a curated, user-named subset of tracked items — never a
+// replacement for tracking. Adding to a list auto-adds an untracked item at
+// the Watchlist floor state; it never changes an already-tracked item's
+// status or progress. See [[tv-time-2-lists-feature-spec]].
+const genListId = () => 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+export const getList = (id) => state.lists.get(id);
+export const allLists = () => [...state.lists.values()].sort((a, b) => b.createdAt - a.createdAt);
+export const listsContaining = (itemId) => allLists().filter((l) => l.itemIds.includes(itemId));
+
+export async function createList(name) {
+  const rec = { id: genListId(), name: name.trim(), itemIds: [], createdAt: Date.now() };
+  state.lists.set(rec.id, rec);
+  await db.put('lists', rec);
+  return rec;
+}
+export async function renameList(id, name) {
+  const l = state.lists.get(id); if (!l) return;
+  l.name = name.trim();
+  await db.put('lists', l);
+}
+export async function deleteList(id) {
+  state.lists.delete(id);
+  await db.del('lists', id);
+}
+export async function addToList(listId, itemId) {
+  const l = state.lists.get(listId); if (!l || l.itemIds.includes(itemId)) return;
+  l.itemIds.push(itemId);
+  await db.put('lists', l);
+}
+export async function removeFromList(listId, itemId) {
+  const l = state.lists.get(listId); if (!l) return;
+  const i = l.itemIds.indexOf(itemId); if (i < 0) return;
+  l.itemIds.splice(i, 1);
+  await db.put('lists', l);
+}
+
+// A show's "release" for list ordering is its most recent *aired* episode,
+// not its premiere — so an old show with a fresh episode jumps to the top.
+function latestReleaseDate(it) {
+  if (it.mediaType === 'movie') return it.releaseDate || '';
+  let latest = '';
+  for (const season of it.seasons || [])
+    for (const ep of season.episodes)
+      if (ep.air_date && ep.air_date <= today() && ep.air_date > latest) latest = ep.air_date;
+  return latest || it.firstAirDate || '';
+}
+// Resolved, live item records for a list — descending by latest release.
+export function listItems(listId) {
+  const l = state.lists.get(listId); if (!l) return [];
+  return l.itemIds.map((id) => state.items.get(id)).filter(Boolean)
+    .sort((a, b) => latestReleaseDate(b).localeCompare(latestReleaseDate(a)));
+}
+
+// For the list-detail filter chips (All / Started / Watched / Not Started).
+export function itemWatchState(it) {
+  if (it.mediaType === 'movie') return it.watchedAt ? 'watched' : 'notstarted';
+  const p = progress(it);
+  if (p.watched === 0) return 'notstarted';
+  if (p.aired > 0 && p.watched >= p.aired) return 'watched';
+  return 'started';
+}
+
 export function movieCalendar() {
   const t = today();
   return movies()

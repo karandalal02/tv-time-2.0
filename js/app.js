@@ -36,6 +36,7 @@ function dayLabel(iso) {
 }
 const sxe = (s, e) => `S${s}E${e}`;
 const isMovieId = (id) => id.startsWith('movie:');
+const isListId = (id) => id.startsWith('list:');
 
 // A prominent "releasing in X days" badge — the big number is the point,
 // meant to build anticipation rather than just state a fact like a status pill.
@@ -101,7 +102,10 @@ let welcomeNeeded = false; // computed at init; true until Google connect or ski
 
 async function render() {
   if (welcomeNeeded) return renderWelcome();
-  if (detailId != null) return isMovieId(detailId) ? renderMovieDetail(detailId) : renderTvDetail(detailId);
+  if (detailId != null) {
+    if (isListId(detailId)) return renderListDetail(detailId);
+    return isMovieId(detailId) ? renderMovieDetail(detailId) : renderTvDetail(detailId);
+  }
   if (!api.hasKey()) return renderNeedKey();
   switch (route.sec) {
     case 'tv': return route.sub === 'calendar' ? renderTvCalendar() : renderTvUpNext();
@@ -110,6 +114,7 @@ async function render() {
     case 'you':
       if (route.sub === 'all-tv') return renderFullList('tv');
       if (route.sub === 'all-movies') return renderFullList('movie');
+      if (route.sub === 'all-lists') return renderAllLists();
       return renderYouHome();
   }
 }
@@ -305,9 +310,88 @@ function renderYouHome() {
   }
 
   let html = `<div class="section-title">Library</div>`;
+  html += listsPreview();
   html += libPreview('tv', tv);
   html += libPreview('movie', mv);
   html += `<div class="section-title">Stats</div>` + statsHTML();
+  view.innerHTML = html;
+}
+
+// ---------- You: Lists ----------
+// A 2x2 poster collage from the list's first 4 items, standing in for a
+// single cover image since a list is mixed-media with no poster of its own.
+function listCollageHTML(items) {
+  const cells = [0, 1, 2, 3].map((i) => {
+    const it = items[i];
+    return it && it.poster ? `<img src="${IMG.poster(it.poster, 'w185')}" alt="">` : `<div class="collage-ph">▦</div>`;
+  }).join('');
+  return `<div class="pcard__collage">${cells}</div>`;
+}
+function listCard(l) {
+  const items = store.listItems(l.id);
+  return `<div class="pcard" data-open="list:${l.id}">
+    ${listCollageHTML(items)}
+    <p class="pcard__title">${esc(l.name)}</p>
+    <p class="pcard__meta">${items.length} item${items.length === 1 ? '' : 's'}</p>
+  </div>`;
+}
+function listsPreview() {
+  const lists = store.allLists();
+  const head = `<div class="lib-head">
+    <span class="lib-head__label">📋 Lists</span>
+    ${lists.length ? `<button class="link" data-goto-list="lists">See all (${lists.length}) ›</button>` : ''}
+  </div>`;
+  if (!lists.length) {
+    return head + `<div class="empty" style="padding:20px 16px">
+      <p style="margin:0 0 10px">Group shows and movies into your own collections.</p>
+      <button class="btn btn--accent" data-new-list>＋ Create your first list</button>
+    </div>`;
+  }
+  return head + `<div class="hscroll">${lists.map(listCard).join('')}</div>`;
+}
+function renderAllLists() {
+  const lists = store.allLists();
+  let html = `<button class="back-btn" data-you-home>‹ Library</button>`;
+  html += `<div class="lib-head" style="margin-top:0">
+    <span class="lib-head__label">📋 All Lists · ${lists.length}</span>
+    <button class="link" data-new-list>＋ New list</button>
+  </div>`;
+  html += lists.length
+    ? `<div class="list-grid">${lists.map(listCard).join('')}</div>`
+    : empty('📋', 'No lists yet', 'Create one to start grouping shows and movies.');
+  view.innerHTML = html;
+}
+
+let listFilterFor = null, listFilter = 'all';
+const FILTER_LABEL = { all: 'All', started: 'Started', watched: 'Watched', notstarted: 'Not Started' };
+function renderListDetail(fullId) {
+  const id = fullId.slice('list:'.length);
+  const l = store.getList(id);
+  if (!l) { detailId = null; route = { ...prev }; return render(); }
+  if (listFilterFor !== id) { listFilterFor = id; listFilter = 'all'; }
+
+  const allItems = store.listItems(id);
+  const items = listFilter === 'all' ? allItems : allItems.filter((it) => store.itemWatchState(it) === listFilter);
+
+  let html = `<button class="back-btn" data-back>‹ Back</button>`;
+  html += `<div class="list-detail-head">
+    ${listCollageHTML(allItems)}
+    <div class="grow">
+      <h2 class="detail-hero__title" style="margin-bottom:2px">${esc(l.name)}</h2>
+      <p class="detail-hero__meta">${allItems.length} item${allItems.length === 1 ? '' : 's'}</p>
+    </div>
+  </div>`;
+  html += `<div class="segmented" style="margin-top:14px">${Object.keys(FILTER_LABEL).map((f) =>
+    `<button data-list-filter="${f}" class="${listFilter === f ? 'active' : ''}">${FILTER_LABEL[f]}</button>`).join('')}</div>`;
+
+  html += items.length
+    ? items.map((it) => it.mediaType === 'tv' ? tvLibRow(it, { listId: id }) : movieLibRow(it, { listId: id })).join('')
+    : empty('📋', allItems.length ? 'Nothing in this filter' : 'This list is empty', 'Add shows or movies from their detail page.');
+
+  html += `<div class="btn-row mt16">
+    <button class="btn grow" data-rename-list="${id}">✎ Rename</button>
+    <button class="btn btn--ghost" data-delete-list="${id}" style="color:var(--danger)">🗑 Delete</button>
+  </div>`;
   view.innerHTML = html;
 }
 
@@ -345,7 +429,10 @@ function renderFullList(type) {
     : empty(type === 'tv' ? '📺' : '🎬', 'Nothing here yet');
   view.innerHTML = html;
 }
-function tvLibRow(s) {
+function listRemoveBtn(id, opts) {
+  return opts?.listId ? `<button class="row__remove" data-list-remove="${opts.listId}::${id}" aria-label="Remove from list">✕</button>` : '';
+}
+function tvLibRow(s, opts) {
   const p = store.progress(s); const pct = p.aired ? Math.round((p.watched / p.aired) * 100) : 0;
   const rating = store.getRating(s.id);
   return `<div class="row" data-open="${s.id}">
@@ -356,9 +443,10 @@ function tvLibRow(s) {
       <div class="progress"><div class="progress__fill" style="width:${pct}%"></div></div>
     </div>
     ${tvStatusPill(s)}
+    ${listRemoveBtn(s.id, opts)}
   </div>`;
 }
-function movieLibRow(m) {
+function movieLibRow(m, opts) {
   const rating = store.getRating(m.id);
   const upcoming = m.releaseDate && m.releaseDate > store.today();
   const pill = m.watchedAt ? { cls: 'pill--good', text: '✓ Watched' }
@@ -371,6 +459,7 @@ function movieLibRow(m) {
       <p class="row__sub">${(m.releaseDate || '').slice(0, 4) || '—'}${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}</p>
     </div>
     <span class="pill ${pill.cls}">${pill.text}</span>
+    ${listRemoveBtn(m.id, opts)}
   </div>`;
 }
 
@@ -519,7 +608,8 @@ async function renderTvDetail(id) {
     }
   }
 
-  view.innerHTML = heroHTML(show, meta, '▦') + ratingsBlock(show) + actions + overview + `<div class="section-title">Episodes</div>` + seasons + footer;
+  const addToListBtn = `<button class="btn btn--ghost btn--block mt8" data-add-to-list>📋 Add to List</button>`;
+  view.innerHTML = heroHTML(show, meta, '▦') + ratingsBlock(show) + actions + addToListBtn + overview + `<div class="section-title">Episodes</div>` + seasons + footer;
 }
 function epRow(id, seasonNumber, e, saved) {
   const watched = store.isWatched(id, seasonNumber, e.episode_number);
@@ -563,7 +653,58 @@ async function renderMovieDetail(id) {
       <div class="btn-row mt8"><button class="btn btn--ghost btn--block" data-remove style="color:var(--danger)">Remove</button></div>`;
   }
   const overview = m.overview ? `<p class="muted mt16" style="font-size:14px;line-height:1.5">${esc(m.overview)}</p>` : '';
-  view.innerHTML = heroHTML(m, meta, '🎬') + ratingsBlock(m) + actions + overview;
+  const addToListBtn = `<button class="btn btn--ghost btn--block mt8" data-add-to-list>📋 Add to List</button>`;
+  view.innerHTML = heroHTML(m, meta, '🎬') + ratingsBlock(m) + actions + addToListBtn + overview;
+}
+
+// ---------- Add to List sheet ----------
+function openAddToListSheet(itemId) {
+  const rec = tempItems.get(itemId) || store.getItem(itemId);
+  if (!rec) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  const renderSheet = () => {
+    const lists = store.allLists();
+    const memberOf = new Set(store.listsContaining(itemId).map((l) => l.id));
+    wrap.innerHTML = `<div class="modal">
+      <div class="modal__handle"></div>
+      <h2>Add to List</h2>
+      <div class="list-check-rows">
+        <button class="list-check-row" id="newListRow"><span class="list-check-row__plus">＋</span><span>New list</span></button>
+        ${lists.map((l) => `<label class="list-check-row">
+          <input type="checkbox" data-list-id="${l.id}" ${memberOf.has(l.id) ? 'checked' : ''}>
+          <span class="grow">${esc(l.name)}</span><span class="muted" style="font-size:12px">${l.itemIds.length}</span>
+        </label>`).join('')}
+        ${!lists.length ? '<p class="muted" style="font-size:13px">No lists yet — create one above.</p>' : ''}
+      </div>
+      <div class="btn-row mt16"><button class="btn btn--ghost btn--block" id="closeListSheet">Done</button></div>
+    </div>`;
+    wrap.querySelector('#closeListSheet').onclick = close;
+    wrap.querySelector('#newListRow').onclick = async () => {
+      const name = prompt('List name');
+      if (!name || !name.trim()) return;
+      const list = await store.createList(name);
+      if (!store.inLibrary(itemId)) await store.addItem(rec, 'watchlist');
+      await store.addToList(list.id, itemId);
+      toast('List created');
+      renderSheet();
+    };
+    wrap.querySelectorAll('input[data-list-id]').forEach((cb) => {
+      cb.onchange = async () => {
+        const listId = cb.dataset.listId;
+        if (cb.checked) {
+          if (!store.inLibrary(itemId)) await store.addItem(rec, 'watchlist');
+          await store.addToList(listId, itemId);
+        } else {
+          await store.removeFromList(listId, itemId);
+        }
+      };
+    });
+  };
+  const close = () => { wrap.remove(); render(); };
+  document.body.appendChild(wrap);
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  renderSheet();
 }
 
 // ---------- click handling ----------
@@ -577,10 +718,59 @@ document.addEventListener('click', async (ev) => {
 
   // Open the full list for a media type (from the You/Library preview)
   const listEl = t.closest('[data-goto-list]');
-  if (listEl) { route = { sec: 'you', sub: listEl.dataset.gotoList === 'tv' ? 'all-tv' : 'all-movies' }; window.scrollTo(0, 0); return render(); }
+  if (listEl) {
+    const kind = listEl.dataset.gotoList;
+    route = { sec: 'you', sub: kind === 'tv' ? 'all-tv' : kind === 'movie' ? 'all-movies' : 'all-lists' };
+    window.scrollTo(0, 0); return render();
+  }
 
   // Back from a full list to the Library home
   if (t.closest('[data-you-home]')) { route = { sec: 'you', sub: 'home' }; syncTabs(); window.scrollTo(0, 0); return render(); }
+
+  // Create a new list (from the You/Library empty state, "See all" header, or the Add-to-List sheet)
+  if (t.closest('[data-new-list]')) {
+    const name = prompt('List name');
+    if (name && name.trim()) {
+      const list = await store.createList(name);
+      toast('List created');
+      return openDetail('list:' + list.id);
+    }
+    return;
+  }
+
+  // Filter chips within a list's detail page
+  const filterEl = t.closest('[data-list-filter]');
+  if (filterEl) { listFilter = filterEl.dataset.listFilter; return render(); }
+
+  if (t.closest('[data-rename-list]')) {
+    const id = t.closest('[data-rename-list]').dataset.renameList;
+    const l = store.getList(id); if (!l) return;
+    const name = prompt('Rename list', l.name);
+    if (name && name.trim()) { await store.renameList(id, name); toast('Renamed'); render(); }
+    return;
+  }
+
+  if (t.closest('[data-delete-list]')) {
+    const id = t.closest('[data-delete-list]').dataset.deleteList;
+    if (confirm('Delete this list? Items stay in your library.')) {
+      await store.deleteList(id);
+      detailId = null; route = { sec: 'you', sub: 'home' }; syncTabs(); toast('List deleted'); render();
+    }
+    return;
+  }
+
+  // Remove a single item from within a list's own view (never untracks it)
+  const listRemoveEl = t.closest('[data-list-remove]');
+  if (listRemoveEl) {
+    ev.stopPropagation();
+    const [listId, itemId] = listRemoveEl.dataset.listRemove.split('::');
+    await store.removeFromList(listId, itemId);
+    toast('Removed from list');
+    return render();
+  }
+
+  // Open the "Add to List" sheet from a TV/movie detail page
+  if (t.closest('[data-add-to-list]')) { openAddToListSheet(detailId); return; }
 
   if (t.closest('[data-back]')) return back();
 

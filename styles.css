@@ -299,6 +299,37 @@ img { display: block; }
 .pcard__title { font-size: 12px; font-weight: 700; margin: 7px 0 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pcard__meta { font-size: 11px; color: var(--muted2); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Lists — 2x2 poster collage standing in for a list's own cover image */
+.pcard__collage {
+  width: 104px; height: 104px; border-radius: 11px; overflow: hidden;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px;
+  background: var(--line); flex: none;
+}
+.pcard__collage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pcard__collage .collage-ph { width: 100%; height: 100%; background: var(--bg-elev2); display: grid; place-items: center; color: var(--muted2); font-size: 15px; }
+
+.list-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 12px; }
+.list-grid .pcard { width: 100%; }
+.list-grid .pcard__collage { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+
+.list-detail-head { display: flex; gap: 14px; align-items: center; }
+.list-detail-head .pcard__collage { width: 84px; height: 84px; }
+
+/* Add-to-List sheet */
+.list-check-rows { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; }
+.list-check-row {
+  align-items: center; gap: 10px; width: 100%;
+  background: var(--bg-elev2); border: 1px solid var(--line); border-radius: 11px;
+  padding: 12px; font-size: 14px; font-weight: 600; color: var(--text); text-align: left;
+}
+/* Specificity beats the .modal label { display:block } rule above. */
+button.list-check-row, label.list-check-row { display: flex; }
+.list-check-row input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.list-check-row__plus { color: var(--accent); font-weight: 800; font-size: 16px; }
+
+/* Remove-from-list button on a row (list detail page only) */
+.row__remove { background: none; border: 0; color: var(--muted2); font-size: 16px; padding: 6px; flex: none; }
+
 /* Type tag (TV / Movie) in search results */
 .tag {
   display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .5px;

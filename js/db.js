@@ -3,11 +3,12 @@
 //   shows    -> TV shows and movies (composite ids like 'tv:1399')
 //   watched  -> { key: 'showId:season:episode', showId, season, episode, at }
 //   ratings  -> { showId, rating, at }
+//   lists    -> { id, name, itemIds: [...composite item ids], createdAt }
 //   settings -> { k, v }
 
 const DB_NAME = 'tally'; // kept from v1 so existing data survives upgrades
-const DB_VERSION = 1;
-const DATA_STORES = ['shows', 'watched', 'ratings']; // stores that count as "user data" for sync
+const DB_VERSION = 2;
+const DATA_STORES = ['shows', 'watched', 'ratings', 'lists']; // stores that count as "user data" for sync
 let _db = null;
 let _onChange = null;      // called after any user-data write (sync scheduling)
 let _suppress = false;     // true while sync applies remote data (avoid loops)
@@ -24,6 +25,7 @@ function open() {
         s.createIndex('byShow', 'showId', { unique: false });
       }
       if (!db.objectStoreNames.contains('ratings')) db.createObjectStore('ratings', { keyPath: 'showId' });
+      if (!db.objectStoreNames.contains('lists')) db.createObjectStore('lists', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'k' });
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -89,17 +91,19 @@ export const db = {
   // Full export / import for backup and Drive sync.
   async exportAll() {
     return {
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       shows: await this.getAll('shows'),
       watched: await this.getAll('watched'),
-      ratings: await this.getAll('ratings')
+      ratings: await this.getAll('ratings'),
+      lists: await this.getAll('lists')
     };
   },
   async importAll(data) {
     for (const s of data.shows || []) await this.put('shows', s);
     for (const w of data.watched || []) await this.put('watched', w);
     for (const r of data.ratings || []) await this.put('ratings', r);
+    for (const l of data.lists || []) await this.put('lists', l);
   },
   // Replace local user data entirely (used when remote is newer).
   async replaceAll(data) {
