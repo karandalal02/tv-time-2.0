@@ -103,6 +103,18 @@ export async function getMovieFull(tmdbId) {
   };
 }
 
+// Lightweight IMDb-id lookup, for backfilling library items saved before
+// this field existed in the schema — avoids re-fetching a whole show's
+// season/episode data (getShowFull) just for one field.
+export async function getImdbId(mediaType, tmdbId) {
+  if (mediaType === 'movie') {
+    const m = await call('/movie/' + tmdbId);
+    return m.imdb_id || null;
+  }
+  const show = await call('/tv/' + tmdbId, { append_to_response: 'external_ids' });
+  return show.external_ids?.imdb_id || null;
+}
+
 // IMDb rating via OMDb (by IMDb ID, which TMDB already gives us for free).
 // Returns a number, or null if OMDb has no rating for this title (a real,
 // cacheable fact — distinct from a network/rate-limit failure, which throws

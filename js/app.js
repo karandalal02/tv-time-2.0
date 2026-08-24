@@ -528,13 +528,21 @@ function ratingsBlock(item) {
 // and the missing rating just never appears rather than showing an error.
 async function ensureImdbRating(item) {
   if (item.imdbRating !== undefined) return;
-  if (!item.imdbId) { item.imdbRating = null; return; }
-  try {
-    const rating = await api.getImdbRating(item.imdbId);
-    item.imdbRating = rating;
-    if (store.inLibrary(item.id)) await store.cacheImdbRating(item.id, rating);
-    if (detailId === item.id) render();
-  } catch (_) { /* leave unset; retried on next open */ }
+  // A library item saved before this feature shipped has no imdbId field at
+  // all (`undefined`) — distinct from a fresh fetch confirming there isn't
+  // one (`null`, cached below). Backfill it once so old library items don't
+  // silently stay ratingless forever.
+  if (item.imdbId === undefined) {
+    try { item.imdbId = await api.getImdbId(item.mediaType, item.tmdbId); }
+    catch (_) { return; } // couldn't backfill yet; retried on next open
+  }
+  if (!item.imdbId) { item.imdbRating = null; }
+  else {
+    try { item.imdbRating = await api.getImdbRating(item.imdbId); }
+    catch (_) { return; } // leave unset; retried on next open
+  }
+  if (store.inLibrary(item.id)) await store.cacheImdbRating(item.id, item.imdbRating);
+  if (detailId === item.id) render();
 }
 
 // ---------- Detail: TV ----------
