@@ -152,7 +152,7 @@ img { display: block; }
 .ratings-block { margin-top: 14px; }
 .ratings-row { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
 .ratings-row:last-child { margin-bottom: 0; }
-.ratings-label { font-size: 12px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .4px; width: 66px; flex: none; }
+.ratings-label { font-size: 12px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .4px; width: 78px; flex: none; white-space: nowrap; }
 .ratings-value { font-size: 17px; font-weight: 800; color: var(--star); }
 
 /* Show detail */

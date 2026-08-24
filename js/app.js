@@ -514,10 +514,10 @@ function starsHTML(id) {
 function ratingsBlock(item) {
   const rows = [];
   if (item.imdbRating != null) {
-    rows.push(`<p class="ratings-row"><span class="ratings-label">IMDb</span><span class="ratings-value">${item.imdbRating.toFixed(1)}</span></p>`);
+    rows.push(`<div class="ratings-row"><span class="ratings-label">IMDb</span><span class="ratings-value">${item.imdbRating.toFixed(1)}</span></div>`);
   }
   if (store.canRate(item)) {
-    rows.push(`<p class="ratings-row"><span class="ratings-label">My rating</span>${starsHTML(item.id)}</p>`);
+    rows.push(`<div class="ratings-row"><span class="ratings-label">My rating</span>${starsHTML(item.id)}</div>`);
   }
   return rows.length ? `<div class="ratings-block">${rows.join('')}</div>` : '';
 }
