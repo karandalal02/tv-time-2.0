@@ -264,10 +264,22 @@ export function tvStopped() {
 export function tvWatchlist() {
   return tvShows().filter((s) => s.listType === 'watchlist').sort((a, b) => b.addedAt - a.addedAt);
 }
-// All shows, most-recently-watched first (falls back to when added).
+// All shows for the You/Library view, grouped into three tiers: watching/
+// watched (any progress at all, newest watched first), then yet to watch
+// (released, untouched, most recently added first), then not yet released
+// (soonest-releasing first) — mirrors the tiering Watch Next already uses.
 export function tvByRecent() {
-  return tvShows().slice().sort((a, b) =>
-    (lastActivity(b.id) - lastActivity(a.id)) || (b.addedAt - a.addedAt));
+  const withProgress = [], notStarted = [], unreleased = [];
+  for (const s of tvShows()) {
+    const p = progress(s);
+    if (p.watched > 0) withProgress.push(s);
+    else if (p.aired > 0) notStarted.push(s);
+    else unreleased.push(s);
+  }
+  withProgress.sort((a, b) => (lastActivity(b.id) - lastActivity(a.id)) || (b.addedAt - a.addedAt));
+  notStarted.sort((a, b) => b.addedAt - a.addedAt);
+  unreleased.sort((a, b) => (a.firstAirDate || '9999-99-99').localeCompare(b.firstAirDate || '9999-99-99'));
+  return [...withProgress, ...notStarted, ...unreleased];
 }
 export function tvCalendar() {
   const t = today(), out = [];
@@ -304,13 +316,21 @@ export function movieUpNext() {
 export function moviesWatched() {
   return movies().filter((m) => m.watchedAt).sort((a, b) => (b.watchedAt || '').localeCompare(a.watchedAt || ''));
 }
-// All movies, most-recently-watched first (falls back to when added).
+// All movies for the You/Library view, grouped into three tiers: watched
+// (newest watched first), then yet to watch (released, untouched, most
+// recently added first), then not yet released (soonest-releasing first).
 export function moviesByRecent() {
-  return movies().slice().sort((a, b) => {
-    const ra = a.watchedAt ? Date.parse(a.watchedAt) : a.addedAt;
-    const rb = b.watchedAt ? Date.parse(b.watchedAt) : b.addedAt;
-    return rb - ra;
-  });
+  const t = today();
+  const watched = [], toWatch = [], unreleased = [];
+  for (const m of movies()) {
+    if (m.watchedAt) watched.push(m);
+    else if (m.releaseDate && m.releaseDate > t) unreleased.push(m);
+    else toWatch.push(m);
+  }
+  watched.sort((a, b) => (b.watchedAt || '').localeCompare(a.watchedAt || ''));
+  toWatch.sort((a, b) => b.addedAt - a.addedAt);
+  unreleased.sort((a, b) => (a.releaseDate || '9999-99-99').localeCompare(b.releaseDate || '9999-99-99'));
+  return [...watched, ...toWatch, ...unreleased];
 }
 // ---------- Lists ----------
 // A list is a curated, user-named subset of tracked items — never a
