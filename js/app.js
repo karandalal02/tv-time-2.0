@@ -43,6 +43,16 @@ function lastSyncLabel(date) {
   if (days === 1) return 'yesterday';
   return `${days} days ago`;
 }
+// Day label for a backup-history entry — local calendar day, matching how
+// listDailyRevisions() buckets revisions.
+function revisionDayLabel(date) {
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const startOfThat = new Date(date); startOfThat.setHours(0, 0, 0, 0);
+  const days = Math.round((startOfToday - startOfThat) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
 const sxe = (s, e) => `S${s}E${e}`;
 const isMovieId = (id) => id.startsWith('movie:');
 const isListId = (id) => id.startsWith('list:');
@@ -1037,12 +1047,15 @@ function openBackupHistory() {
       return;
     }
     try {
-      const revisions = await sync.listRevisions();
+      const revisions = await sync.listDailyRevisions();
       if (!revisions.length) { box.innerHTML = `<p class="muted">No backup history yet — nothing has synced to Google Drive.</p>`; return; }
-      box.innerHTML = revisions.map((r, i) => `<button class="list-check-row" data-rev="${r.id}">
-        <span class="grow">${new Date(r.modifiedTime).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+      box.innerHTML = revisions.map((r, i) => {
+        const d = new Date(r.modifiedTime);
+        return `<button class="list-check-row" data-rev="${r.id}">
+        <span class="grow">${revisionDayLabel(d)} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
         ${i === 0 ? '<span class="pill pill--good">Latest</span>' : ''}
-      </button>`).join('');
+      </button>`;
+      }).join('');
       revisions.forEach((r) => {
         wrap.querySelector(`[data-rev="${r.id}"]`).onclick = () => renderPreview(r.id, new Date(r.modifiedTime));
       });

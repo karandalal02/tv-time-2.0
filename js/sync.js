@@ -103,6 +103,22 @@ export async function listRevisions() {
   const data = await res.json();
   return (data.revisions || []).sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
 }
+// Drive creates a new revision on nearly every sync push (a handful a day
+// under normal use) — far more granularity than useful for browsing. Collapse
+// to one entry per local calendar day: the last (most recent) revision from
+// that day, which is the meaningful recovery point.
+export async function listDailyRevisions() {
+  const all = await listRevisions(); // already sorted newest-first
+  const seenDays = new Set();
+  const daily = [];
+  for (const r of all) {
+    const day = new Date(r.modifiedTime).toDateString();
+    if (seenDays.has(day)) continue;
+    seenDays.add(day);
+    daily.push(r);
+  }
+  return daily;
+}
 export async function getRevision(revisionId) {
   if (fileId == null) fileId = await findFile();
   return (await authedFetch(`${API}/files/${fileId}/revisions/${revisionId}?alt=media`)).json();
