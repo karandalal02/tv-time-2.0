@@ -34,6 +34,15 @@ function dayLabel(iso) {
   if (diff > 1 && diff < 7) return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long' });
   return '';
 }
+// A bare time (e.g. "3:45 PM") is misleading once it's not from today — it
+// reads as recent even when it's actually days old, which is exactly what a
+// stale-sync warning needs to avoid.
+function lastSyncLabel(date) {
+  const days = Math.floor((Date.now() - date.getTime()) / 86400000);
+  if (days <= 0) return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  if (days === 1) return 'yesterday';
+  return `${days} days ago`;
+}
 const sxe = (s, e) => `S${s}E${e}`;
 const isMovieId = (id) => id.startsWith('movie:');
 const isListId = (id) => id.startsWith('list:');
@@ -876,8 +885,13 @@ async function renderGdriveBox(wrap) {
     return;
   }
 
+  const stale = !st.syncing && await sync.checkStale();
+  const lastSyncText = st.syncing ? '<i>syncing…</i>'
+    : st.lastSyncAt ? `last sync ${lastSyncLabel(st.lastSyncAt)}`
+    : 'not yet synced';
   box.innerHTML = `
-    <p style="margin-top:0">✓ Signed in as <b>${esc(st.email || 'your account')}</b>${st.syncing ? ' · <i>syncing…</i>' : (st.lastSyncAt ? ` · last sync ${st.lastSyncAt.toLocaleTimeString()}` : '')}</p>
+    <p style="margin-top:0">✓ Signed in as <b>${esc(st.email || 'your account')}</b> · ${lastSyncText}</p>
+    ${stale ? `<p style="color:var(--warn)">⚠️ Some changes on this device haven't backed up in a few days — check your connection and try syncing now.</p>` : ''}
     <div class="btn-row">
       <button class="btn grow" id="gSyncNow">Sync now</button>
       <button class="btn btn--ghost" id="gDisconnect" style="color:var(--danger)">Disconnect</button>
@@ -998,6 +1012,84 @@ async function importCsv(text) {
   return { ok, failed, total: groups.size };
 }
 
+// ---------- Backup history (Google Drive revisions) ----------
+// Drive automatically keeps prior versions of the backup file each time it's
+// overwritten — a real recovery path independent of anything this app itself
+// tracks, for when a bad sync ever leaves the current data looking wrong.
+function openBackupHistory() {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+
+  const renderList = async () => {
+    wrap.innerHTML = `<div class="modal">
+      <div class="modal__handle"></div>
+      <h2>Backup History</h2>
+      <div id="revList"><div class="spinner" style="margin:10px auto"></div></div>
+      <div class="btn-row mt16"><button class="btn btn--ghost btn--block" id="closeHistory">Close</button></div>
+    </div>`;
+    wrap.querySelector('#closeHistory').onclick = close;
+    const box = wrap.querySelector('#revList');
+    if (!sync.status().connected) {
+      box.innerHTML = `<p class="muted">Sign in to Google Drive above to view backup history.</p>`;
+      return;
+    }
+    try {
+      const revisions = await sync.listRevisions();
+      if (!revisions.length) { box.innerHTML = `<p class="muted">No backup history yet — nothing has synced to Google Drive.</p>`; return; }
+      box.innerHTML = revisions.map((r, i) => `<button class="list-check-row" data-rev="${r.id}">
+        <span class="grow">${new Date(r.modifiedTime).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</span>
+        ${i === 0 ? '<span class="pill pill--good">Latest</span>' : ''}
+      </button>`).join('');
+      revisions.forEach((r) => {
+        wrap.querySelector(`[data-rev="${r.id}"]`).onclick = () => renderPreview(r.id, new Date(r.modifiedTime));
+      });
+    } catch (_) {
+      box.innerHTML = `<p class="muted">Couldn't load backup history — check your connection.</p>`;
+    }
+  };
+
+  const renderPreview = async (revisionId, modifiedTime) => {
+    wrap.innerHTML = `<div class="modal">
+      <div class="modal__handle"></div>
+      <h2>Restore Backup</h2>
+      <div id="revPreview"><div class="spinner" style="margin:10px auto"></div></div>
+      <div class="btn-row mt16"><button class="btn btn--ghost btn--block" id="backToList">‹ Back</button></div>
+    </div>`;
+    wrap.querySelector('#backToList').onclick = renderList;
+    const box = wrap.querySelector('#revPreview');
+    try {
+      const payload = await sync.getRevision(revisionId);
+      const d = payload.data || {};
+      box.innerHTML = `
+        <p class="muted" style="font-size:13px;margin-top:0">${modifiedTime.toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' })}</p>
+        <div class="stat-grid mt8">
+          <div class="stat"><div class="stat__num stat__num--accent">${(d.shows || []).length}</div><div class="stat__label">Shows/Movies</div></div>
+          <div class="stat"><div class="stat__num stat__num--good">${(d.watched || []).length}</div><div class="stat__label">Watched eps</div></div>
+          <div class="stat"><div class="stat__num">${(d.lists || []).length}</div><div class="stat__label">Lists</div></div>
+        </div>
+        <button class="btn btn--accent btn--block mt16" id="doRestore">Restore this backup</button>`;
+      box.querySelector('#doRestore').onclick = async () => {
+        if (!confirm('Restore this backup? This replaces everything currently on this device — and in Google Drive — with this older version.')) return;
+        try {
+          await sync.restoreRevision(payload);
+          await store.loadState();
+          close();
+          if (activeSettings) { activeSettings.remove(); activeSettings = null; }
+          toast('Backup restored');
+          render();
+        } catch (_) { toast('Restore failed — check your connection'); }
+      };
+    } catch (_) {
+      box.innerHTML = `<p class="muted">Couldn't load this backup — check your connection.</p>`;
+    }
+  };
+
+  renderList();
+}
+
 // ---------- Settings modal ----------
 function openSettings() {
   const wrap = document.createElement('div');
@@ -1009,6 +1101,9 @@ function openSettings() {
       <label>Google Drive sync</label>
       <div id="gdriveBox"><div class="spinner" style="margin:10px auto"></div></div>
       <p class="muted" style="font-size:12px;margin-top:8px">If you sign in with Google, your email and basic usage counts (how many shows/movies you've saved — never titles or watch history) are visible to the developer to help improve the app.</p>
+      <label>Backup history</label>
+      <div class="btn-row"><button class="btn btn--block" id="openBackupHistory">View past backups from Google Drive</button></div>
+      <p class="muted" style="font-size:12px;margin-top:8px">Google Drive keeps earlier versions of your synced backup — useful if something ever looks wrong after a sync and you want to restore an older, known-good version.</p>
       <label>Backup</label>
       <div class="btn-row">
         <button class="btn grow" id="exportBtn">Export CSV</button>
@@ -1027,6 +1122,7 @@ function openSettings() {
   const close = () => { activeSettings = null; wrap.remove(); };
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('#closeSettings').onclick = close;
+  wrap.querySelector('#openBackupHistory').onclick = () => openBackupHistory();
   wrap.querySelector('#exportBtn').onclick = async () => {
     const blob = new Blob([await buildCsv()], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
@@ -1053,6 +1149,11 @@ function openSettings() {
 
 // ---------- init ----------
 async function init() {
+  // Ask the browser not to evict this site's local data under storage
+  // pressure — this is the only local copy of a user's tracking data
+  // between syncs, and getting silently wiped is a real, documented browser
+  // behavior (e.g. Safari's inactivity-based storage eviction).
+  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   document.querySelectorAll('.tab').forEach((b) => (b.onclick = () => go(b.dataset.sec)));
   $('#settingsBtn').onclick = openSettings;
   $('#brand').onclick = () => go('tv');

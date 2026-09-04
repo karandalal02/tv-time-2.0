@@ -92,6 +92,31 @@ async function uploadFile(payload) {
   }
 }
 
+// Google Drive automatically keeps prior versions of a file each time it's
+// overwritten in place (which is exactly what uploadFile's PATCH does) — a
+// real recovery path if a bad sync ever overwrites today's backup with
+// something stale, independent of anything this app itself tracks locally.
+export async function listRevisions() {
+  if (fileId == null) fileId = await findFile();
+  if (!fileId) return [];
+  const res = await authedFetch(`${API}/files/${fileId}/revisions?fields=revisions(id,modifiedTime,size)&pageSize=1000`);
+  const data = await res.json();
+  return (data.revisions || []).sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));
+}
+export async function getRevision(revisionId) {
+  if (fileId == null) fileId = await findFile();
+  return (await authedFetch(`${API}/files/${fileId}/revisions/${revisionId}?alt=media`)).json();
+}
+
+// Persisted (not just in-memory) so a fresh page load still knows how long
+// it's actually been since sync last genuinely succeeded — the in-memory
+// lastSyncAt alone would reset to "unknown" on every reload, which can't
+// tell a healthy quiet period apart from days of silently failing pushes.
+async function markSynced() {
+  lastSyncAt = new Date();
+  await db.setSetting('lastSyncSuccessAt', lastSyncAt.getTime());
+}
+
 // ---------- core sync ----------
 async function push() {
   const exported = await db.exportAll();
@@ -101,7 +126,7 @@ async function push() {
     lastChangeAt: await db.getSetting('lastChangeAt', 0),
     data: exported
   });
-  lastSyncAt = new Date();
+  await markSynced();
   reportUsage(exported.shows); // fire-and-forget; aggregate counts only
 }
 
@@ -129,8 +154,40 @@ async function applyRemote(remote) {
     await db.replaceAll(remote.data || {});
     await db.setSetting('lastChangeAt', remote.lastChangeAt || 0);
   } finally { db.setSuppressChanges(false); }
-  lastSyncAt = new Date();
+  await markSynced();
   if (cbs.onRemoteApplied) await cbs.onRemoteApplied();
+}
+
+// An explicit, user-chosen restore from an older Drive revision (see
+// listRevisions/getRevision). Unlike applyRemote, this is a deliberate
+// correction, not a routine reconciliation — it stamps a fresh lastChangeAt
+// and pushes immediately, so the restored data becomes the authoritative
+// version both locally and on Drive right away rather than waiting for the
+// next normal sync to decide who wins.
+export async function restoreRevision(payload) {
+  db.setSuppressChanges(true);
+  try { await db.replaceAll(payload.data || {}); }
+  finally { db.setSuppressChanges(false); }
+  await db.setSetting('lastChangeAt', Date.now());
+  if (cbs.onRemoteApplied) await cbs.onRemoteApplied();
+  await push();
+}
+
+// The lastChangeAt clock alone isn't a safe enough signal to trust for
+// something as destructive as replacing all local data — it lives in the
+// same local storage that can get wiped (e.g. browser storage eviction),
+// which resets it to look "older" than a Drive backup that's actually
+// stale. So a remote that would *shrink* an already-populated device (fewer
+// shows, fewer watched episodes, fewer lists) is treated as suspect rather
+// than trusted blindly — except when local is genuinely empty, which is the
+// normal, desired case of a fresh device pulling its real backup for the
+// first time.
+function isRegressive(localData, remoteData) {
+  const hasLocalData = (localData.shows || []).length || (localData.watched || []).length || (localData.lists || []).length;
+  if (!hasLocalData) return false;
+  return (remoteData.shows || []).length < (localData.shows || []).length
+    || (remoteData.watched || []).length < (localData.watched || []).length
+    || (remoteData.lists || []).length < (localData.lists || []).length;
 }
 
 export async function syncNow() {
@@ -142,10 +199,31 @@ export async function syncNow() {
     if (!fileId) { await push(); return; }
     const remote = await downloadFile(fileId);
     const remoteLC = remote?.lastChangeAt || 0;
-    if (remoteLC > localLC) await applyRemote(remote);
+    if (remoteLC > localLC) {
+      const localData = await db.exportAll();
+      if (isRegressive(localData, remote.data || {})) {
+        // Local wins this correction — stamp it as a fresh change rather
+        // than pushing with the old (lower) local clock value, which would
+        // otherwise leave Drive's lastChangeAt looking older than it was.
+        await db.setSetting('lastChangeAt', Date.now());
+        await push();
+      } else await applyRemote(remote);
+    }
     else if (localLC > remoteLC) await push();
-    else lastSyncAt = new Date();
+    else await markSynced();
   } finally { syncing = false; cbs.onStatusChange?.(); }
+}
+
+// True when there are local changes that haven't successfully reached Drive
+// in a while — distinct from needsReconnect (an auth failure the user must
+// act on): this covers any other silent failure (network, Drive API errors,
+// etc.) that the existing debounced push() swallows without surfacing.
+const STALE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+export async function checkStale() {
+  const lastChangeAt = await db.getSetting('lastChangeAt', 0);
+  const lastSyncSuccessAt = await db.getSetting('lastSyncSuccessAt', 0);
+  if (!lastChangeAt || lastChangeAt <= lastSyncSuccessAt) return false; // nothing unsynced
+  return (Date.now() - lastSyncSuccessAt) > STALE_MS;
 }
 
 function schedulePush() {
@@ -171,6 +249,8 @@ export async function disconnect() {
 export async function init(callbacks) {
   cbs = callbacks || {};
   email = await db.getSetting('gdriveEmail', null); // last-known email (shown while (re)connecting)
+  const persistedSyncAt = await db.getSetting('lastSyncSuccessAt', null);
+  if (persistedSyncAt) lastSyncAt = new Date(persistedSyncAt);
   db.onDataChange(() => { if (accessToken) schedulePush(); });
 
   const ok = await ensureToken();
