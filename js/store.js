@@ -103,11 +103,17 @@ export function canRate(item) {
 // Persists a fetched IMDb rating onto an already-saved item. A no-op for
 // unsaved/preview items — the caller (app.js) holds those in memory only and
 // mutates them directly; they get cached for real once actually added.
+// Suppressed from the sync clock — this is incidental background caching of
+// fetched external data, not a real edit, and every device re-fetches it
+// independently anyway; letting it bump lastChangeAt would make the clock an
+// unreliable signal for genuine changes (exactly what caused a stale device
+// to once look "newer" than Drive despite having worse data).
 export async function cacheImdbRating(id, rating) {
   const item = state.items.get(id);
   if (!item) return;
   item.imdbRating = rating;
-  await db.put('shows', item);
+  db.setSuppressChanges(true);
+  try { await db.put('shows', item); } finally { db.setSuppressChanges(false); }
 }
 
 // ---------- TV: episodes & progress ----------
@@ -202,14 +208,21 @@ function wasAnticipated(show) {
 // A demoted show's rank is frozen the moment it falls out of grace, so it
 // doesn't keep drifting as more days pass — it just sits where it landed
 // until something else demotes above it. Checked once per load; idempotent.
+// Suppressed from the sync clock — this runs automatically on every app
+// open with no user action, so letting it bump lastChangeAt would make a
+// device merely being opened look like it just received a real edit (the
+// exact mechanism that once let a stale device's clock outrank Drive's).
 export async function reconcileQueueRanks() {
-  for (const s of tvShows()) {
-    if (s.yetToStartRank || progress(s).watched > 0) continue;
-    if (wasAnticipated(s) && progress(s).aired > 0 && daysSince(s.firstAirDate) > GRACE_DAYS) {
-      s.yetToStartRank = Date.now();
-      await db.put('shows', s);
+  db.setSuppressChanges(true);
+  try {
+    for (const s of tvShows()) {
+      if (s.yetToStartRank || progress(s).watched > 0) continue;
+      if (wasAnticipated(s) && progress(s).aired > 0 && daysSince(s.firstAirDate) > GRACE_DAYS) {
+        s.yetToStartRank = Date.now();
+        await db.put('shows', s);
+      }
     }
-  }
+  } finally { db.setSuppressChanges(false); }
 }
 
 // Watch Next is two stacked tiers:

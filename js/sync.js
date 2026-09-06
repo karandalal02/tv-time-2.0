@@ -189,23 +189,11 @@ export async function restoreRevision(payload) {
   await push();
 }
 
-// The lastChangeAt clock alone isn't a safe enough signal to trust for
-// something as destructive as replacing all local data — it lives in the
-// same local storage that can get wiped (e.g. browser storage eviction),
-// which resets it to look "older" than a Drive backup that's actually
-// stale. So a remote that would *shrink* an already-populated device (fewer
-// shows, fewer watched episodes, fewer lists) is treated as suspect rather
-// than trusted blindly — except when local is genuinely empty, which is the
-// normal, desired case of a fresh device pulling its real backup for the
-// first time.
-function isRegressive(localData, remoteData) {
-  const hasLocalData = (localData.shows || []).length || (localData.watched || []).length || (localData.lists || []).length;
-  if (!hasLocalData) return false;
-  return (remoteData.shows || []).length < (localData.shows || []).length
-    || (remoteData.watched || []).length < (localData.watched || []).length
-    || (remoteData.lists || []).length < (localData.lists || []).length;
-}
-
+// The lastChangeAt clock is now a trustworthy "latest real edit" signal —
+// only genuine user actions bump it (see the suppressed writes in store.js
+// for reconcileQueueRanks and cacheImdbRating) — so whichever side's clock
+// is later can be trusted directly, without also needing to compare dataset
+// sizes as a second-guess.
 export async function syncNow() {
   if (syncing) return;
   syncing = true; cbs.onStatusChange?.();
@@ -215,16 +203,7 @@ export async function syncNow() {
     if (!fileId) { await push(); return; }
     const remote = await downloadFile(fileId);
     const remoteLC = remote?.lastChangeAt || 0;
-    if (remoteLC > localLC) {
-      const localData = await db.exportAll();
-      if (isRegressive(localData, remote.data || {})) {
-        // Local wins this correction — stamp it as a fresh change rather
-        // than pushing with the old (lower) local clock value, which would
-        // otherwise leave Drive's lastChangeAt looking older than it was.
-        await db.setSetting('lastChangeAt', Date.now());
-        await push();
-      } else await applyRemote(remote);
-    }
+    if (remoteLC > localLC) await applyRemote(remote);
     else if (localLC > remoteLC) await push();
     else await markSynced();
   } finally { syncing = false; cbs.onStatusChange?.(); }
