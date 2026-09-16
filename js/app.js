@@ -87,6 +87,38 @@ let detailId = null;
 let prev = { sec: 'tv', sub: 'upnext' };
 const tempItems = new Map(); // fetched-but-not-saved records, keyed by composite id
 
+// One global list/grid preference, applied everywhere a library list renders
+// (Watch Next, calendars, full lists, list detail) — not per-page, so
+// switching it anywhere sticks everywhere. Persisted across sessions.
+let layoutMode = 'list';
+async function setLayoutMode(mode) {
+  if (mode === layoutMode) return;
+  layoutMode = mode;
+  await db.setSetting('libraryLayout', mode);
+  render();
+}
+function layoutToggle() {
+  return `<div class="layout-toggle">
+    <button data-layout="list" class="${layoutMode === 'list' ? 'active' : ''}" aria-label="List view">☰</button>
+    <button data-layout="grid" class="${layoutMode === 'grid' ? 'active' : ''}" aria-label="Grid view">▦</button>
+  </div>`;
+}
+// A poster + one-line caption tile for grid mode — no title text, since the
+// poster itself is enough to recognize the show/movie. opts.listId adds a
+// remove-from-list overlay button, matching listRemoveBtn's row-mode role.
+function gridTile(item, captionHTML, glyph, opts) {
+  return `<div class="grid-tile" data-open="${item.id}">
+    <div class="grid-tile__posterwrap">
+      ${poster(item.poster, 'grid-tile__poster', glyph || '▦')}
+      ${opts?.listId ? `<button class="grid-tile__remove" data-list-remove="${opts.listId}::${item.id}" aria-label="Remove from list">✕</button>` : ''}
+    </div>
+    <p class="grid-tile__caption">${captionHTML}</p>
+  </div>`;
+}
+function layoutWrap(itemsHTML) {
+  return layoutMode === 'grid' ? `<div class="poster-grid">${itemsHTML}</div>` : itemsHTML;
+}
+
 function go(sec) {
   route = { sec, sub: DEFAULT_SUB[sec] };
   detailId = null; window.scrollTo(0, 0); syncTabs(); render();
@@ -170,56 +202,65 @@ function renderTvUpNext() {
   const caught = store.tvCaughtUp();
   const yetToRelease = store.tvYetToRelease();
   const stopped = store.tvStopped();
-  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]) + layoutToggle();
   if (!watchNext.length && !yetToStart.length && !caught.length && !yetToRelease.length && !stopped.length) {
     html += empty('🍿', 'No shows yet', 'Add a show from Search to start tracking.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a show</button>');
   } else {
-    if (watchNext.length) html += `<div class="section-title">Watch Next</div>` + watchNext.map(tvUpNextCard).join('');
-    if (yetToStart.length) html += `<div class="section-title">Yet to Start</div>` + yetToStart.map(tvUpNextCard).join('');
-    if (caught.length) html += `<div class="section-title">All caught up</div>` + caught.map((s) => {
+    if (watchNext.length) html += `<div class="section-title">Watch Next</div>` + layoutWrap(watchNext.map(tvUpNextCard).join(''));
+    if (yetToStart.length) html += `<div class="section-title">Yet to Start</div>` + layoutWrap(yetToStart.map(tvUpNextCard).join(''));
+    if (caught.length) html += `<div class="section-title">All caught up</div>` + layoutWrap(caught.map((s) => {
       const p = store.progress(s);
       const ended = store.isEnded(s);
+      const caption = ended ? 'Finished' : 'Waiting for new episodes';
+      if (layoutMode === 'grid') return gridTile(s, caption);
       return `<div class="row" data-open="${s.id}">
         ${poster(s.poster)}
         <div class="row__body">
           <p class="row__title">${esc(s.name)}</p>
-          <p class="row__sub">${ended ? 'Finished' : 'Waiting for new episodes'}</p>
+          <p class="row__sub">${caption}</p>
           <p class="row__meta">${p.watched}/${p.total} watched</p>
         </div>
         ${tvStatusPill(s)}
       </div>`;
-    }).join('');
-    if (yetToRelease.length) html += `<div class="section-title">Yet to Release</div>` + yetToRelease.map((s) => `
-      <div class="row" data-open="${s.id}">
-        ${poster(s.poster)}
-        <div class="row__body">
-          <p class="row__title">${esc(s.name)}</p>
-          <p class="row__sub">${s.firstAirDate ? 'Premieres ' + fmtDate(s.firstAirDate) : 'No air date yet'}</p>
-        </div>
-        ${countdownBadge(s.firstAirDate)}
-      </div>`).join('');
-    if (stopped.length) html += `<div class="section-title">Stopped</div>` + stopped.map((s) => {
-      const p = store.progress(s);
+    }).join(''));
+    if (yetToRelease.length) html += `<div class="section-title">Yet to Release</div>` + layoutWrap(yetToRelease.map((s) => {
+      const caption = s.firstAirDate ? 'Premieres ' + fmtDate(s.firstAirDate) : 'No air date yet';
+      if (layoutMode === 'grid') return gridTile(s, caption);
       return `<div class="row" data-open="${s.id}">
         ${poster(s.poster)}
         <div class="row__body">
           <p class="row__title">${esc(s.name)}</p>
-          <p class="row__sub">${p.watched}/${p.total} watched</p>
+          <p class="row__sub">${caption}</p>
+        </div>
+        ${countdownBadge(s.firstAirDate)}
+      </div>`;
+    }).join(''));
+    if (stopped.length) html += `<div class="section-title">Stopped</div>` + layoutWrap(stopped.map((s) => {
+      const p = store.progress(s);
+      const caption = `${p.watched}/${p.total} watched`;
+      if (layoutMode === 'grid') return gridTile(s, caption);
+      return `<div class="row" data-open="${s.id}">
+        ${poster(s.poster)}
+        <div class="row__body">
+          <p class="row__title">${esc(s.name)}</p>
+          <p class="row__sub">${caption}</p>
         </div>
         ${tvStatusPill(s)}
       </div>`;
-    }).join('');
+    }).join(''));
   }
   view.innerHTML = html;
 }
 function tvUpNextCard({ show, next }) {
   const { ep, season, episode } = next;
+  const caption = `${sxe(season, episode)} · ${esc(ep.name || 'Episode ' + episode)}`;
+  if (layoutMode === 'grid') return gridTile(show, caption);
   return `<div class="row" data-open="${show.id}">
     ${poster(show.poster)}
     <div class="row__body">
       <p class="row__title">${esc(show.name)}</p>
-      <p class="row__sub">${sxe(season, episode)} · ${esc(ep.name || 'Episode ' + episode)}</p>
+      <p class="row__sub">${caption}</p>
       <p class="row__meta">${ep.air_date ? fmtDate(ep.air_date) : ''}</p>
     </div>
     <button class="ep__check" data-watch="${show.id}::${season}::${episode}" aria-label="Mark watched">✓</button>
@@ -228,7 +269,7 @@ function tvUpNextCard({ show, next }) {
 
 // ---------- TV: Calendar ----------
 function renderTvCalendar() {
-  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]) + layoutToggle();
   const items = store.tvCalendar();
   if (!items.length) { view.innerHTML = html + empty('📅', 'No upcoming episodes', 'New episodes for shows in your library will appear here.'); return; }
   const groups = {};
@@ -236,40 +277,46 @@ function renderTvCalendar() {
   html += Object.entries(groups).map(([date, list]) => `
     <div class="cal-day">
       <p class="cal-day__label">${dayLabel(date) ? dayLabel(date) + ' · ' : ''}${fmtDate(date, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-      ${list.map((it) => `<div class="row" data-open="${it.show.id}">
+      ${layoutWrap(list.map((it) => {
+        const caption = `${sxe(it.season, it.episode)} · ${esc(it.ep.name || 'Episode ' + it.episode)}`;
+        if (layoutMode === 'grid') return gridTile(it.show, caption);
+        return `<div class="row" data-open="${it.show.id}">
         ${poster(it.show.poster)}
         <div class="row__body"><p class="row__title">${esc(it.show.name)}</p>
-        <p class="row__sub">${sxe(it.season, it.episode)} · ${esc(it.ep.name || 'Episode ' + it.episode)}</p></div>
-      </div>`).join('')}
+        <p class="row__sub">${caption}</p></div>
+      </div>`;
+      }).join(''))}
     </div>`).join('');
   view.innerHTML = html;
 }
 
 // ---------- Movies: Up Next ----------
 function renderMovieUpNext() {
-  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]) + layoutToggle();
   const list = store.movieUpNext();
   if (!list.length) {
     html += empty('🎬', 'No movies queued', 'Add a movie from Search to build your watchlist.',
       '<button class="btn btn--accent mt16" data-goto="search">Find a movie</button>');
   } else {
-    html += `<div class="section-title">To Watch</div>` + list.map((m) => {
+    html += `<div class="section-title">To Watch</div>` + layoutWrap(list.map((m) => {
+      const caption = `${(m.releaseDate || '').slice(0, 4) || '—'}${m.runtime ? ' · ' + m.runtime + 'm' : ''}`;
+      if (layoutMode === 'grid') return gridTile(m, caption, '🎬');
       return `<div class="row" data-open="${m.id}">
         ${poster(m.poster, 'poster', '🎬')}
         <div class="row__body">
           <p class="row__title">${esc(m.name)}</p>
-          <p class="row__sub">${(m.releaseDate || '').slice(0, 4) || '—'}${m.runtime ? ' · ' + m.runtime + 'm' : ''}</p>
+          <p class="row__sub">${caption}</p>
         </div>
         <button class="ep__check" data-moviewatch="${m.id}" aria-label="Mark watched">✓</button>
       </div>`;
-    }).join('');
+    }).join(''));
   }
   view.innerHTML = html;
 }
 
 // ---------- Movies: Calendar ----------
 function renderMovieCalendar() {
-  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]);
+  let html = segmented([{ sub: 'upnext', label: 'Watch Next' }, { sub: 'calendar', label: 'Future Releases' }]) + layoutToggle();
   const items = store.movieCalendar();
   if (!items.length) { view.innerHTML = html + empty('📅', 'No upcoming releases', 'Add an unreleased movie to your watchlist and its release date shows here.'); return; }
   const groups = {};
@@ -277,11 +324,14 @@ function renderMovieCalendar() {
   html += Object.entries(groups).map(([date, list]) => `
     <div class="cal-day">
       <p class="cal-day__label">${dayLabel(date) ? dayLabel(date) + ' · ' : ''}${fmtDate(date, { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-      ${list.map((it) => `<div class="row" data-open="${it.movie.id}">
+      ${layoutWrap(list.map((it) => {
+        if (layoutMode === 'grid') return gridTile(it.movie, 'Premieres', '🎬');
+        return `<div class="row" data-open="${it.movie.id}">
         ${poster(it.movie.poster, 'poster', '🎬')}
         <div class="row__body"><p class="row__title">${esc(it.movie.name)}</p>
         <p class="row__sub">Premieres</p></div>
-      </div>`).join('')}
+      </div>`;
+      }).join(''))}
     </div>`).join('');
   view.innerHTML = html;
 }
@@ -402,9 +452,10 @@ function renderListDetail(fullId) {
   </div>`;
   html += `<div class="segmented" style="margin-top:14px">${Object.keys(FILTER_LABEL).map((f) =>
     `<button data-list-filter="${f}" class="${listFilter === f ? 'active' : ''}">${FILTER_LABEL[f]}</button>`).join('')}</div>`;
+  html += `<div class="hstack" style="justify-content:flex-end;margin-top:10px">${layoutToggle()}</div>`;
 
   html += items.length
-    ? items.map((it) => it.mediaType === 'tv' ? tvLibRow(it, { listId: id }) : movieLibRow(it, { listId: id })).join('')
+    ? layoutWrap(items.map((it) => it.mediaType === 'tv' ? tvLibRow(it, { listId: id }) : movieLibRow(it, { listId: id })).join(''))
     : empty('📋', allItems.length ? 'Nothing in this filter' : 'This list is empty', 'Add shows or movies from their detail page.');
 
   html += `<div class="btn-row mt16">
@@ -442,9 +493,12 @@ function libPreview(type, list) {
 function renderFullList(type) {
   const list = type === 'tv' ? store.tvByRecent() : store.moviesByRecent();
   let html = `<button class="back-btn" data-you-home>‹ Library</button>`;
-  html += `<div class="section-title">${type === 'tv' ? '📺 All TV Shows' : '🎬 All Movies'} · ${list.length}</div>`;
+  html += `<div class="lib-head" style="margin-top:0">
+    <span class="lib-head__label">${type === 'tv' ? '📺 All TV Shows' : '🎬 All Movies'} · ${list.length}</span>
+    ${layoutToggle()}
+  </div>`;
   html += list.length
-    ? list.map(type === 'tv' ? tvLibRow : movieLibRow).join('')
+    ? layoutWrap(list.map(type === 'tv' ? tvLibRow : movieLibRow).join(''))
     : empty(type === 'tv' ? '📺' : '🎬', 'Nothing here yet');
   view.innerHTML = html;
 }
@@ -454,11 +508,13 @@ function listRemoveBtn(id, opts) {
 function tvLibRow(s, opts) {
   const p = store.progress(s); const pct = p.aired ? Math.round((p.watched / p.aired) * 100) : 0;
   const rating = store.getRating(s.id);
+  const caption = `${p.watched}/${p.aired || p.total} eps${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}`;
+  if (layoutMode === 'grid') return gridTile(s, caption, null, opts);
   return `<div class="row" data-open="${s.id}">
     ${poster(s.poster)}
     <div class="row__body">
       <p class="row__title">${esc(s.name)}</p>
-      <p class="row__sub">${p.watched}/${p.aired || p.total} eps${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}</p>
+      <p class="row__sub">${caption}</p>
       <div class="progress"><div class="progress__fill" style="width:${pct}%"></div></div>
     </div>
     ${tvStatusPill(s)}
@@ -471,11 +527,13 @@ function movieLibRow(m, opts) {
   const pill = m.watchedAt ? { cls: 'pill--good', text: '✓ Watched' }
     : upcoming ? { cls: 'pill--warn', text: 'Yet to release' }
     : { cls: '', text: 'Yet to watch' };
+  const caption = `${(m.releaseDate || '').slice(0, 4) || '—'}${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}`;
+  if (layoutMode === 'grid') return gridTile(m, caption, '🎬', opts);
   return `<div class="row" data-open="${m.id}">
     ${poster(m.poster, 'poster', '🎬')}
     <div class="row__body">
       <p class="row__title">${esc(m.name)}</p>
-      <p class="row__sub">${(m.releaseDate || '').slice(0, 4) || '—'}${rating ? ` · <span class="rating-inline">${'★'.repeat(rating)}</span>` : ''}</p>
+      <p class="row__sub">${caption}</p>
     </div>
     <span class="pill ${pill.cls}">${pill.text}</span>
     ${listRemoveBtn(m.id, opts)}
@@ -753,6 +811,10 @@ document.addEventListener('click', async (ev) => {
 
   // Back from a full list to the Library home
   if (t.closest('[data-you-home]')) { route = { sec: 'you', sub: 'home' }; syncTabs(); window.scrollTo(0, 0); return render(); }
+
+  // Global List/Grid layout toggle
+  const layoutEl = t.closest('[data-layout]');
+  if (layoutEl) { return setLayoutMode(layoutEl.dataset.layout); }
 
   // Create a new list (from the You/Library empty state, "See all" header, or the Add-to-List sheet)
   if (t.closest('[data-new-list]')) {
@@ -1171,6 +1233,7 @@ async function init() {
   $('#settingsBtn').onclick = openSettings;
   $('#brand').onclick = () => go('tv');
   await store.loadState();
+  layoutMode = await db.getSetting('libraryLayout', 'list');
   welcomeNeeded = !(await db.getSetting('welcomeDone', false)) && !(await db.getSetting('gdriveEnabled', false));
   syncTabs(); render();
 
