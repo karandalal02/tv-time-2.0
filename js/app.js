@@ -107,10 +107,14 @@ function layoutToggle() {
 // poster itself is enough to recognize the show/movie. opts.listId adds a
 // remove-from-list overlay button, matching listRemoveBtn's row-mode role.
 function gridTile(item, captionHTML, glyph, opts) {
+  const action = opts?.watchAttr ? `<button class="ep__check" data-watch="${opts.watchAttr}" aria-label="Mark watched">✓</button>`
+    : opts?.movieWatchId ? `<button class="ep__check" data-moviewatch="${opts.movieWatchId}" aria-label="Mark watched">✓</button>`
+    : opts?.listId ? `<button class="grid-tile__remove" data-list-remove="${opts.listId}::${item.id}" aria-label="Remove from list">✕</button>`
+    : '';
   return `<div class="grid-tile" data-open="${item.id}">
     <div class="grid-tile__posterwrap">
       ${poster(item.poster, 'grid-tile__poster', glyph || '▦')}
-      ${opts?.listId ? `<button class="grid-tile__remove" data-list-remove="${opts.listId}::${item.id}" aria-label="Remove from list">✕</button>` : ''}
+      ${action}
     </div>
     <p class="grid-tile__caption">${captionHTML}</p>
   </div>`;
@@ -255,7 +259,7 @@ function renderTvUpNext() {
 function tvUpNextCard({ show, next }) {
   const { ep, season, episode } = next;
   const caption = `${sxe(season, episode)} · ${esc(ep.name || 'Episode ' + episode)}`;
-  if (layoutMode === 'grid') return gridTile(show, caption);
+  if (layoutMode === 'grid') return gridTile(show, caption, null, { watchAttr: `${show.id}::${season}::${episode}` });
   return `<div class="row" data-open="${show.id}">
     ${poster(show.poster)}
     <div class="row__body">
@@ -300,7 +304,7 @@ function renderMovieUpNext() {
   } else {
     html += `<div class="section-title">To Watch</div>` + layoutWrap(list.map((m) => {
       const caption = `${(m.releaseDate || '').slice(0, 4) || '—'}${m.runtime ? ' · ' + m.runtime + 'm' : ''}`;
-      if (layoutMode === 'grid') return gridTile(m, caption, '🎬');
+      if (layoutMode === 'grid') return gridTile(m, caption, '🎬', { movieWatchId: m.id });
       return `<div class="row" data-open="${m.id}">
         ${poster(m.poster, 'poster', '🎬')}
         <div class="row__body">
