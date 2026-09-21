@@ -114,6 +114,9 @@ img { display: block; }
    poster itself is enough to recognize the show/movie, so only a short
    caption (next episode, status, etc.) sits underneath it. */
 .poster-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; margin-bottom: 6px; }
+@media (min-width: 700px) {
+  .poster-grid { grid-template-columns: repeat(5, 1fr); gap: 12px 8px; }
+}
 .grid-tile:active { transform: scale(0.97); }
 .grid-tile__posterwrap { position: relative; }
 .grid-tile__poster { width: 100%; aspect-ratio: 2 / 3; border-radius: 10px; object-fit: cover; background: var(--bg-elev2); display: block; }
