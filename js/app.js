@@ -746,6 +746,36 @@ async function renderMovieDetail(id) {
   view.innerHTML = heroHTML(m, meta, '🎬') + ratingsBlock(m) + actions + addToListBtn + overview;
 }
 
+// ---------- Skip-ahead watch prompt ----------
+// Marking an episode that isn't actually the next unwatched one usually
+// means the user is catching up on several at once — offer to fill in the
+// gap instead of making them tap every episode in between individually.
+function openSkipAheadPrompt(id, season, episode) {
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-backdrop';
+  const label = sxe(season, episode);
+  wrap.innerHTML = `<div class="modal">
+    <div class="modal__handle"></div>
+    <h2>Mark watched</h2>
+    <p>${label} isn’t the next episode you haven’t watched. Mark everything up through it, or just this one?</p>
+    <button class="btn btn--accent btn--block" id="markThrough">Mark everything through ${label}</button>
+    <button class="btn btn--block mt8" id="markJust">Just ${label}</button>
+    <button class="btn btn--ghost btn--block mt8" id="cancelSkipPrompt">Cancel</button>
+  </div>`;
+  document.body.appendChild(wrap);
+  const close = () => wrap.remove();
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector('#cancelSkipPrompt').onclick = close;
+  wrap.querySelector('#markJust').onclick = async () => {
+    await store.toggleWatched(id, season, episode, true);
+    close(); toast('Marked watched'); render();
+  };
+  wrap.querySelector('#markThrough').onclick = async () => {
+    await store.markWatchedThrough(id, season, episode);
+    close(); toast(`Marked through ${label}`); render();
+  };
+}
+
 // ---------- Add to List sheet ----------
 function openAddToListSheet(itemId) {
   const rec = tempItems.get(itemId) || store.getItem(itemId);
@@ -874,8 +904,20 @@ document.addEventListener('click', async (ev) => {
   const watchEl = t.closest('[data-watch]');
   if (watchEl) {
     ev.stopPropagation();
-    const [id, s, e] = watchEl.dataset.watch.split('::');
-    const on = await store.toggleWatched(id, Number(s), Number(e));
+    const [id, sStr, eStr] = watchEl.dataset.watch.split('::');
+    const season = Number(sStr), episode = Number(eStr);
+    // Only worth asking when marking watched (not un-marking) and only when
+    // this episode is genuinely ahead of the real next-unwatched one — the
+    // Watch Next/grid quick-actions always target that exact episode, so
+    // this only ever fires from tapping an episode row directly.
+    if (!store.isWatched(id, season, episode)) {
+      const show = store.getItem(id);
+      const next = show && store.nextEpisode(show);
+      if (next && (season > next.season || (season === next.season && episode > next.episode))) {
+        return openSkipAheadPrompt(id, season, episode);
+      }
+    }
+    const on = await store.toggleWatched(id, season, episode);
     toast(on ? 'Marked watched' : 'Unmarked');
     return render();
   }

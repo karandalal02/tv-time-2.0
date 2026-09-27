@@ -155,6 +155,23 @@ export async function setShowWatched(id, on) {
   if (on) await setListType(id, 'watching');
 }
 
+// Marks every aired-but-unwatched episode from the start of the series up
+// through (and including) the given episode — the "catch up to here" choice
+// offered when a user marks an episode that skips ahead of the actual next
+// unwatched one, so they don't have to tap through every episode in between.
+export async function markWatchedThrough(id, targetSeason, targetEpisode) {
+  const show = state.items.get(id); if (!show) return;
+  for (const season of show.seasons || []) {
+    if (season.season_number > targetSeason) break;
+    for (const ep of season.episodes) {
+      if (season.season_number === targetSeason && ep.episode_number > targetEpisode) break;
+      if (isAired(ep.air_date) && !isWatched(id, season.season_number, ep.episode_number)) {
+        await toggleWatched(id, season.season_number, ep.episode_number, true);
+      }
+    }
+  }
+}
+
 export function progress(show) {
   let total = 0, aired = 0, watched = 0;
   for (const season of show.seasons || []) {
