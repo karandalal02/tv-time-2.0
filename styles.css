@@ -15,6 +15,7 @@
   --radius: 14px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --header-h: 63px; /* .app-header's own rendered height, excluding --safe-top */
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -306,7 +307,7 @@ img { display: block; }
 .segmented {
   display: flex; gap: 4px; padding: 4px; margin-bottom: 16px;
   background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px;
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: calc(var(--safe-top) + var(--header-h)); z-index: 5;
 }
 .segmented button {
   flex: 1; border: 0; background: none; color: var(--muted);
