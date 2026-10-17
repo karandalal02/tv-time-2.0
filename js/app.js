@@ -75,7 +75,7 @@ function tvStatusPill(show) {
   if (show.listType === 'stopped') return `<span class="pill">Stopped</span>`;
   const p = store.progress(show);
   if (p.aired === 0) return `<span class="pill pill--warn">Yet to release</span>`;
-  if (p.watched >= p.aired) return store.isEnded(show) ? `<span class="pill">Ended</span>` : `<span class="pill pill--good">Caught up</span>`;
+  if (!store.nextEpisode(show)) return store.isEnded(show) ? `<span class="pill">Ended</span>` : `<span class="pill pill--good">Caught up</span>`;
   if (show.listType === 'watching') return `<span class="pill pill--good">Ongoing</span>`;
   return `<span class="pill">Not started</span>`;
 }
@@ -761,17 +761,21 @@ function openSkipAheadPrompt(id, season, episode) {
     <button class="btn btn--accent btn--block" id="markThrough">Mark everything through ${label}</button>
     <button class="btn btn--block mt8" id="markJust">Just ${label}</button>
     <button class="btn btn--ghost btn--block mt8" id="cancelSkipPrompt">Cancel</button>
+    <label class="list-check-row"><input type="checkbox" id="noAskAgain"><span class="grow">Don’t ask again for this show — just mark the episode I tap</span></label>
   </div>`;
   document.body.appendChild(wrap);
   const close = () => wrap.remove();
   wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
   wrap.querySelector('#cancelSkipPrompt').onclick = close;
+  const rememberOptOut = async () => { if (wrap.querySelector('#noAskAgain').checked) await store.setNoSkipPrompt(id, true); };
   wrap.querySelector('#markJust').onclick = async () => {
     await store.toggleWatched(id, season, episode, true);
+    await rememberOptOut();
     close(); toast('Marked watched'); render();
   };
   wrap.querySelector('#markThrough').onclick = async () => {
     await store.markWatchedThrough(id, season, episode);
+    await rememberOptOut();
     close(); toast(`Marked through ${label}`); render();
   };
 }
@@ -912,7 +916,7 @@ document.addEventListener('click', async (ev) => {
     // this only ever fires from tapping an episode row directly.
     if (!store.isWatched(id, season, episode)) {
       const show = store.getItem(id);
-      const next = show && store.nextEpisode(show);
+      const next = show && !show.noSkipPrompt && store.nextEpisode(show);
       if (next && (season > next.season || (season === next.season && episode > next.episode))) {
         return openSkipAheadPrompt(id, season, episode);
       }

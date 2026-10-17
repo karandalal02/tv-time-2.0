@@ -155,21 +155,36 @@ export async function setShowWatched(id, on) {
   if (on) await setListType(id, 'watching');
 }
 
-// Marks every aired-but-unwatched episode from the start of the series up
-// through (and including) the given episode — the "catch up to here" choice
-// offered when a user marks an episode that skips ahead of the actual next
-// unwatched one, so they don't have to tap through every episode in between.
+// The "catch up to here" choice offered when a user marks an episode that
+// skips ahead of their next one: marks every aired-but-unwatched episode
+// after the last one they watched, up through the target. Anything before
+// that last-watched point is deliberately left alone (e.g. earlier seasons
+// of a show they only follow the latest season of). With nothing watched
+// yet, that's the whole series up to the target.
 export async function markWatchedThrough(id, targetSeason, targetEpisode) {
   const show = state.items.get(id); if (!show) return;
+  const eps = [];
+  let lastWatched = -1, target = -1;
   for (const season of show.seasons || []) {
-    if (season.season_number > targetSeason) break;
     for (const ep of season.episodes) {
-      if (season.season_number === targetSeason && ep.episode_number > targetEpisode) break;
-      if (isAired(ep.air_date) && !isWatched(id, season.season_number, ep.episode_number)) {
-        await toggleWatched(id, season.season_number, ep.episode_number, true);
-      }
+      if (isWatched(id, season.season_number, ep.episode_number)) lastWatched = eps.length;
+      if (season.season_number === targetSeason && ep.episode_number === targetEpisode) target = eps.length;
+      eps.push({ season: season.season_number, episode: ep.episode_number, ep });
     }
   }
+  for (let i = lastWatched + 1; i <= target; i++) {
+    const e = eps[i];
+    if (isAired(e.ep.air_date) && !isWatched(id, e.season, e.episode)) await toggleWatched(id, e.season, e.episode, true);
+  }
+  if (!isWatched(id, targetSeason, targetEpisode)) await toggleWatched(id, targetSeason, targetEpisode, true);
+}
+
+// Opt a show out of the skip-ahead prompt ("don't ask again") — marking an
+// episode on it then just marks that one episode.
+export async function setNoSkipPrompt(id, on) {
+  const s = state.items.get(id); if (!s) return;
+  s.noSkipPrompt = !!on;
+  await db.put('shows', s);
 }
 
 export function progress(show) {
@@ -192,15 +207,34 @@ export function isCompleted(show) {
   return p.aired > 0 && p.watched >= p.aired && isEnded(show);
 }
 
+// What to watch next, judged by the latest season rather than the whole
+// show: the first aired, unwatched episode after the last one you watched.
+// Only if nothing is left after that point does a gap *inside the latest
+// season* surface; gaps in earlier seasons never do, so a show where you
+// only follow the latest season counts as caught up once that season is
+// done (null = caught up, or nothing has aired yet).
 export function nextEpisode(show) {
+  let idx = 0, lastWatched = -1, latestSeason = null;
+  for (const season of show.seasons || []) {
+    for (const ep of season.episodes) {
+      if (isWatched(show.id, season.season_number, ep.episode_number)) lastWatched = idx;
+      if (isAired(ep.air_date)) latestSeason = season.season_number;
+      idx++;
+    }
+  }
+  idx = 0;
+  let gapInLatestSeason = null;
   for (const season of show.seasons || []) {
     for (const ep of season.episodes) {
       if (isAired(ep.air_date) && !isWatched(show.id, season.season_number, ep.episode_number)) {
-        return { season: season.season_number, episode: ep.episode_number, ep };
+        const cand = { season: season.season_number, episode: ep.episode_number, ep };
+        if (idx > lastWatched) return cand;
+        if (!gapInLatestSeason && season.season_number === latestSeason) gapInLatestSeason = cand;
       }
+      idx++;
     }
   }
-  return null;
+  return gapInLatestSeason;
 }
 
 function lastActivity(id) {
