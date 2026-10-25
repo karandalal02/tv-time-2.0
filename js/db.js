@@ -59,6 +59,13 @@ export const db = {
     await noteChange(store);
     return r;
   },
+  // A write that never touches the sync clock — for background upkeep (e.g.
+  // refreshing episode data from TMDB) that isn't a real user edit. Unlike
+  // the global suppress flag, it can't accidentally swallow a genuine edit
+  // happening at the same moment.
+  async putQuiet(store, value) {
+    return done((await tx(store, 'readwrite')).put(value));
+  },
   async del(store, key) {
     const r = await done((await tx(store, 'readwrite')).delete(key));
     await noteChange(store);

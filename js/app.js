@@ -626,6 +626,38 @@ async function ensureImdbRating(item) {
   if (detailId === item.id) render();
 }
 
+// ---------- Keeping saved items current ----------
+// See store.needsRefresh. Failures are swallowed — the item just stays as it
+// was and gets retried on the next pass.
+const refreshing = new Set();
+async function refreshItem(id) {
+  const cur = store.getItem(id);
+  if (!cur || refreshing.has(id)) return false;
+  refreshing.add(id);
+  try {
+    const fresh = cur.mediaType === 'movie' ? await api.getMovieFull(cur.tmdbId) : await api.getShowFull(cur.tmdbId);
+    return await store.applyRefresh(id, fresh);
+  } catch (_) { return false; }
+  finally { refreshing.delete(id); }
+}
+// Background pass over everything that's gone stale (default: not refreshed
+// in 24h). A few at a time, to stay polite to TMDB with a big library.
+let refreshPass = null;
+function refreshStaleItems() {
+  if (refreshPass || !api.hasKey()) return;
+  const queue = store.staleItemIds();
+  if (!queue.length) return;
+  let changed = false;
+  const worker = async () => { while (queue.length) { if (await refreshItem(queue.shift())) changed = true; } };
+  refreshPass = Promise.all([worker(), worker(), worker()]).then(() => { if (changed) render(); }).finally(() => { refreshPass = null; });
+}
+// Opening a saved show/movie refreshes just that one if it's more than a few
+// minutes stale, redrawing the page only if something actually changed.
+async function refreshOnOpen(item) {
+  if (!store.inLibrary(item.id) || !store.needsRefresh(item, 10 * 60 * 1000)) return;
+  if (await refreshItem(item.id) && detailId === item.id) render();
+}
+
 // ---------- Detail: TV ----------
 async function renderTvDetail(id) {
   let show = store.getItem(id) || tempItems.get(id);
@@ -637,6 +669,7 @@ async function renderTvDetail(id) {
     if (detailId !== id) return;
   }
   ensureImdbRating(show);
+  refreshOnOpen(show);
 
   const p = store.progress(show);
   const pct = p.aired ? Math.round((p.watched / p.aired) * 100) : 0;
@@ -724,6 +757,7 @@ async function renderMovieDetail(id) {
     if (detailId !== id) return;
   }
   ensureImdbRating(m);
+  refreshOnOpen(m);
 
   const upcoming = m.releaseDate && m.releaseDate > store.today();
   const statusPill = upcoming ? `<span class="pill pill--warn">Coming ${fmtDate(m.releaseDate)}</span>`
@@ -1286,6 +1320,8 @@ async function init() {
   layoutMode = await db.getSetting('libraryLayout', 'list');
   welcomeNeeded = !(await db.getSetting('welcomeDone', false)) && !(await db.getSetting('gdriveEnabled', false));
   syncTabs(); render();
+  refreshStaleItems();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshStaleItems(); });
 
   // Persistent one-tap reconnect banner (shown only when Drive needs it).
   const banner = document.createElement('div');

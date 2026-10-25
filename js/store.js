@@ -67,7 +67,7 @@ export const movies = () => items('movie');
 
 export async function addItem(record, listType) {
   const id = cid(record.mediaType, record.tmdbId);
-  const rec = { ...record, id, listType, addedAt: Date.now() };
+  const rec = { ...record, id, listType, addedAt: Date.now(), refreshedAt: Date.now() };
   state.items.set(id, rec);
   await db.put('shows', rec);
   return rec;
@@ -256,6 +256,39 @@ const tracked = () => tvShows().filter((s) => s.listType !== 'stopped');
 function wasAnticipated(show) {
   return !!show.firstAirDate && show.addedAt < Date.parse(show.firstAirDate + 'T00:00:00');
 }
+// ---------- Keeping saved items current with TMDB ----------
+// An item's episodes/dates are fetched when it's added, so without this a
+// still-airing show never learns about new episodes or seasons, and a show
+// added before its premiere stays frozen with missing dates. Only items that
+// can still change are worth re-fetching: shows not ended/cancelled, and
+// movies not yet watched or released.
+export function needsRefresh(item, maxAgeMs = 24 * 60 * 60 * 1000) {
+  const live = item.mediaType === 'movie'
+    ? !item.watchedAt && !/^(released|canceled|cancelled)$/i.test(item.status || '')
+    : !isEnded(item);
+  return live && (!item.refreshedAt || Date.now() - item.refreshedAt > maxAgeMs);
+}
+export const staleItemIds = (maxAgeMs) => [...state.items.values()].filter((i) => needsRefresh(i, maxAgeMs)).map((i) => i.id);
+
+// Merges freshly fetched TMDB data into a saved item. Your own data (list,
+// watch history, ratings, when you added it) is untouched — watched episodes
+// live in their own store keyed by episode, so they carry over automatically.
+// Returns true if anything visible actually changed. Saved quietly: this is
+// upkeep, not an edit, so it must not advance the sync clock.
+export async function applyRefresh(id, fresh) {
+  const cur = state.items.get(id); if (!cur) return false;
+  const merged = {
+    ...cur, ...fresh,
+    id: cur.id, listType: cur.listType, addedAt: cur.addedAt,
+    imdbId: fresh.imdbId || cur.imdbId, refreshedAt: Date.now()
+  };
+  const changed = JSON.stringify([cur.seasons, cur.status, cur.firstAirDate, cur.releaseDate, cur.runtime])
+    !== JSON.stringify([merged.seasons, merged.status, merged.firstAirDate, merged.releaseDate, merged.runtime]);
+  state.items.set(id, merged);
+  await db.putQuiet('shows', merged);
+  return changed;
+}
+
 // A demoted show's rank is frozen the moment it falls out of grace, so it
 // doesn't keep drifting as more days pass — it just sits where it landed
 // until something else demotes above it. Checked once per load; idempotent.
